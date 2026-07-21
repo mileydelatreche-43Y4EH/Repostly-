@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Repostly</title>
+  <script>
+    try {
+      if (localStorage.getItem("repostly_theme") !== "light") {
+        document.documentElement.classList.add("dark");
+      }
+    } catch (_) {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css?v=19" />
+</head>
+<body>
+  <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="Thème">
+    <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M21.2 14.1a1 1 0 0 0-1.05-.14 7.2 7.2 0 0 1-9.11-9.1 1 1 0 0 0-1.19-1.2A9.2 9.2 0 1 0 21.34 15a1 1 0 0 0-.14-1z"/>
+    </svg>
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.5" fill="currentColor"/>
+      <path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 1.8v2.4M12 19.8v2.4M1.8 12h2.4M19.8 12h2.4M4.4 4.4l1.7 1.7M17.9 17.9l1.7 1.7M4.4 19.6l1.7-1.7M17.9 6.1l1.7-1.7"/>
+    </svg>
+  </button>
+
+  <div class="glow glow-a" aria-hidden="true"></div>
+  <div class="glow glow-b" aria-hidden="true"></div>
+
+  <main class="shell">
+    <!-- HOME -->
+    <section id="view-home" class="view">
+      <header class="hero">
+        <p class="brand">Repostly</p>
+        <h1>Le profil avant<br />le premier message.</h1>
+        <p class="sub">
+          Analyse ce qu’une personne poste et reposte pour comprendre ses goûts et couleurs.
+        </p>
+      </header>
+
+      <section class="panel">
+        <form id="form" class="form">
+          <label class="field">
+            <span class="field-label">Profil TikTok</span>
+            <input
+              id="profile"
+              type="text"
+              name="profile"
+              placeholder="@username ou lien du profil"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            />
+          </label>
+
+          <div class="row">
+            <label class="field field-sm">
+              <span class="field-label">Reposts à analyser</span>
+              <select id="max">
+                <option value="100" selected>100</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+              </select>
+            </label>
+
+            <button type="submit" id="go" class="btn-primary">
+              <span class="btn-label">Analyser le profil</span>
+            </button>
+          </div>
+        </form>
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section id="recent-wrap" class="recent-wrap hidden">
+        <h2 class="recent-title">Recherches récentes</h2>
+        <div id="recent-list" class="recent-list"></div>
+      </section>
+    </section>
+
+    <!-- SCANNING -->
+    <section id="view-scan" class="view view-scan hidden">
+      <div class="scan-card">
+        <div class="scan-stage">
+          <div class="scan-bloom" aria-hidden="true"></div>
+          <div class="scan-avatar-wrap">
+            <img id="scan-avatar" class="scan-avatar hidden" alt="" />
+            <div id="scan-fallback" class="scan-fallback">@</div>
+            <div class="scan-beam" aria-hidden="true"></div>
+          </div>
+          <div class="scan-wave" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+        <p id="scan-user" class="scan-user">@username</p>
+        <p id="scan-name" class="scan-name"></p>
+        <p id="scan-step" class="scan-step">Lecture du profil…</p>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="view-results" class="view view-results hidden">
+      <button type="button" id="back-home" class="btn-ghost">← Nouvelle analyse</button>
+
+      <header class="result-hero">
+        <img id="res-avatar" class="res-avatar hidden" alt="" />
+        <div id="res-fallback" class="res-fallback">@</div>
+        <div class="result-hero-text">
+          <h1 id="res-nick" class="res-nick">—</h1>
+          <a id="res-handle" class="res-handle" href="#" target="_blank" rel="noopener noreferrer">@</a>
+          <p id="res-bio" class="res-bio hidden"></p>
+          <div class="meta-row">
+            <span id="res-count" class="pill soft"></span>
+            <span id="res-analyzed" class="pill soft hidden"></span>
+            <span id="res-posts" class="pill soft hidden"></span>
+            <span id="res-vibe" class="pill soft"></span>
+            <span id="res-confidence" class="pill soft"></span>
+          </div>
+        </div>
+      </header>
+
+      <div class="results-grid">
+        <article class="card card-wide">
+          <h2>Résumé</h2>
+          <p id="summary" class="body"></p>
+        </article>
+
+        <article id="card-own" class="card card-wide hidden">
+          <h2>Style de ses posts</h2>
+          <p id="own-style" class="body"></p>
+        </article>
+
+        <article class="card">
+          <h2>Vibe</h2>
+          <p id="tone" class="body"></p>
+        </article>
+
+        <article class="card">
+          <h2>Personnalité</h2>
+          <ul id="personality" class="chips"></ul>
+        </article>
+
+        <article class="card">
+          <h2>Intérêts</h2>
+          <ul id="interests" class="chips"></ul>
+        </article>
+
+        <article class="card">
+          <h2>Thèmes</h2>
+          <ul id="topics" class="chips"></ul>
+        </article>
+
+        <div id="dynamic-categories" class="categories-wrap"></div>
+
+        <article class="card card-wide">
+          <h2>Patterns de contenu</h2>
+          <ul id="patterns" class="list"></ul>
+        </article>
+
+        <article id="section-posts" class="card card-wide hidden">
+          <h2>Ses posts</h2>
+          <div id="posts-grid" class="media-grid"></div>
+        </article>
+
+        <article id="section-reposts" class="card card-wide hidden">
+          <h2>Ses reposts</h2>
+          <div id="reposts-grid" class="media-grid"></div>
+        </article>
+
+        <article class="card">
+          <h2>Créateurs</h2>
+          <ul id="creators" class="list"></ul>
+        </article>
+
+        <article class="card card-wide">
+          <h2>Mots-clés</h2>
+          <ul id="keywords" class="chips"></ul>
+        </article>
+
+        <article class="card">
+          <h2>Top hashtags</h2>
+          <ul id="signals-tags" class="list compact"></ul>
+        </article>
+
+        <article class="card">
+          <h2>Top créateurs (brut)</h2>
+          <ul id="signals-authors" class="list compact"></ul>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js?v=19"></script>
+</body>
+</html>
