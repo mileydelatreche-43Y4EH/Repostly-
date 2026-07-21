@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: repostly
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: SCRAPE_HEADLESS
+        value: "1"
+      - key: ANTHROPIC_API_KEY
+        sync: false
