@@ -41,13 +41,14 @@
   syncThemeLabel();
 
   const steps = [
+    "Connexion…",
     "Lecture du profil…",
     "Collecte des reposts…",
-    "Lecture des posts…",
     "Analyse des goûts…",
     "Portrait en cours…",
   ];
   let stepTimer = null;
+  let liveSteps = false;
 
   function showView(name) {
     viewHome.classList.toggle("hidden", name !== "home");
@@ -97,13 +98,15 @@
     scanUser.textContent = `@${handle}`;
     scanName.textContent = "";
     setAvatar(scanAvatar, scanFallback, "", handle);
+    liveSteps = false;
     let i = 0;
-    scanStep.textContent = steps[0];
+    scanStep.textContent = "Connexion…";
     clearInterval(stepTimer);
     stepTimer = setInterval(() => {
+      if (liveSteps) return;
       i = (i + 1) % steps.length;
       scanStep.textContent = steps[i];
-    }, 3400);
+    }, 4000);
   }
 
   function stopScanUI() {
@@ -726,9 +729,11 @@
             continue;
           }
           if (ev.type === "profile" && ev.data) {
+            liveSteps = true;
             applyQuickProfile(ev.data, handle);
             scanStep.textContent = "Profil trouvé — analyse…";
           } else if (ev.type === "progress" && ev.message) {
+            liveSteps = true;
             scanStep.textContent = ev.message;
           } else if (ev.type === "error") {
             throw new Error(ev.detail || "Erreur analyse");

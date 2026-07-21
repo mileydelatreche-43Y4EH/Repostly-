@@ -54,7 +54,9 @@ async def log_requests(request: Request, call_next):
         log.exception("✗ %s %s crash", request.method, request.url.path)
         raise
     ms = (time.perf_counter() - started) * 1000
-    if request.url.path.startswith("/api/") or response.status_code >= 400:
+    # Les streams SSE se terminent "tout de suite" côté middleware — ne pas mentir
+    is_stream = getattr(response, "media_type", None) == "text/event-stream"
+    if request.url.path.startswith("/api/") and not is_stream:
         log.info(
             "← %s %s → %s (%.0f ms)",
             request.method,
@@ -62,6 +64,8 @@ async def log_requests(request: Request, call_next):
             response.status_code,
             ms,
         )
+    elif is_stream:
+        log.info("← %s %s → stream ouvert", request.method, request.url.path)
     return response
 
 
@@ -168,17 +172,20 @@ async def api_analyze(req: AnalyzeRequest):
 
         def on_profile(profile: dict) -> None:
             log.info(
-                "stream profile @%s photo=%s",
+                "stream profile @%s photo=%s url=%s",
                 handle,
                 bool(profile.get("avatar") or profile.get("avatar_url")),
+                (profile.get("avatar_url") or "")[:60],
             )
             emit({"type": "profile", "data": profile})
 
         def on_progress(message: str) -> None:
+            log.info("stream progress @%s: %s", handle, message)
             emit({"type": "progress", "message": message})
 
         def work() -> None:
             try:
+                emit({"type": "progress", "message": "Lancement navigateur…"})
                 h, posts, reposts, profile = fetch_profile_content(
                     req.profile,
                     max_items=max_items,
@@ -189,13 +196,21 @@ async def api_analyze(req: AnalyzeRequest):
                 box["ok"] = (h, posts, reposts, profile)
             except Exception as e:
                 box["err"] = e
+                log.exception("scrape thread fail @%s", handle)
             finally:
                 emit({"type": "_done"})
 
         worker = asyncio.create_task(asyncio.to_thread(work))
 
+        # Keepalive SSE (évite buffers / timeouts proxy) + lecture events
         while True:
-            ev = await queue.get()
+            try:
+                ev = await asyncio.wait_for(queue.get(), timeout=8.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                if worker.done():
+                    break
+                continue
             if ev.get("type") == "_done":
                 break
             yield _sse(ev)
@@ -204,9 +219,12 @@ async def api_analyze(req: AnalyzeRequest):
 
         if "err" in box:
             err = box["err"]
-            log.exception("analyze fail @%s: %s", handle, err)
             msg = str(err)
             yield _sse({"type": "error", "detail": msg})
+            return
+
+        if "ok" not in box:
+            yield _sse({"type": "error", "detail": "Analyse interrompue."})
             return
 
         h, posts, reposts, profile = box["ok"]
@@ -240,7 +258,7 @@ async def api_analyze(req: AnalyzeRequest):
             "source": "local",
         }
         yield _sse({"type": "result", "data": payload})
-
+        log.info("stream complete @%s", h)
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",

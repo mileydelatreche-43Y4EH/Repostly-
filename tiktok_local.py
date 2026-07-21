@@ -508,13 +508,7 @@ def _browser_context(headless: bool):
         "--hide-scrollbars",
         "--disable-software-rasterizer",
     ]
-    if light:
-        # Render Free ~512 Mo : Chromium doit rester minimal
-        args += [
-            "--single-process",
-            "--renderer-process-limit=1",
-            "--js-flags=--max-old-space-size=192",
-        ]
+    # Pas de --single-process : ça freeze souvent Chromium sur Render
 
     p = sync_playwright().start()
     browser = p.chromium.launch(headless=headless, args=args)
@@ -528,16 +522,6 @@ def _browser_context(headless: bool):
         locale="en-US",
         java_script_enabled=True,
     )
-    # Moins de cache / images lourdes en mode léger
-    if light:
-        context.route(
-            "**/*",
-            lambda route: (
-                route.abort()
-                if route.request.resource_type in ("media", "font")
-                else route.continue_()
-            ),
-        )
     return p, browser, context
 
 
