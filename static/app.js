@@ -114,7 +114,8 @@
   function applyQuickProfile(p, handle) {
     if (!p) return;
     const letter = p.nickname || handle;
-    setAvatar(scanAvatar, scanFallback, p.avatar || "", letter);
+    const photo = resolveAvatarUrl(p, p.avatar || "");
+    setAvatar(scanAvatar, scanFallback, photo, letter);
     if (p.nickname) scanName.textContent = p.nickname;
   }
 
@@ -696,9 +697,13 @@
         if (pr.ok) {
           applyQuickProfile(quick, handle);
           scanStep.textContent = "Profil trouvé — analyse…";
+        } else {
+          console.warn("profile preview", pr.status, quick);
+          scanStep.textContent = "Profil lent — analyse…";
         }
-      } catch (_) {
-        /* preview optionnel */
+      } catch (err) {
+        console.warn("profile preview fail", err);
+        scanStep.textContent = "Profil lent — analyse…";
       }
 
       const res = await fetch("/api/analyze", {
