@@ -178,7 +178,9 @@ def _parse_count_token(raw: str) -> int:
     return _int(raw)
 
 
-def _extract_profile_from_page(page, handle: str) -> dict[str, Any]:
+def _extract_profile_from_page(
+    page, handle: str, *, encode_avatar: bool = False
+) -> dict[str, Any]:
     data = page.evaluate(
         """() => {
           const out = {
@@ -298,12 +300,14 @@ def _extract_profile_from_page(page, handle: str) -> dict[str, Any]:
         data = {}
 
     avatar_raw = (data.get("avatar") or "").strip()
-    avatar_data = _avatar_to_data_url(page, avatar_raw) if avatar_raw else ""
+    # Pas de base64 par défaut (lent) — le front passe par /api/avatar
+    encode = bool(encode_avatar)
+    avatar_data = _avatar_to_data_url(page, avatar_raw) if (encode and avatar_raw) else ""
 
     return {
         "handle": handle,
         "nickname": (data.get("nickname") or handle or "").strip(),
-        "avatar": avatar_data or avatar_raw,
+        "avatar": avatar_data or "",
         "avatar_url": avatar_raw if avatar_raw.startswith("http") else "",
         "bio": (data.get("bio") or "").strip()[:300],
         "followers": str(data.get("followers") or "").strip(),
@@ -416,27 +420,27 @@ def _collect_from_api(
 
     page.on("response", on_response)
 
-    # Scroll pour déclencher les premières pages API (les plus récentes en haut)
-    scroll_rounds = max(30, min(120, (max_items // 8) + 20))
+    # Scroll plus agressif (moins d'attente entre chaque)
+    scroll_rounds = max(20, min(90, (max_items // 10) + 15))
     stagnant = 0
     last_n = 0
     for _ in range(scroll_rounds):
         if len(collected) >= max_items:
             break
-        page.mouse.wheel(0, 3200)
-        page.wait_for_timeout(700)
+        page.mouse.wheel(0, 3600)
+        page.wait_for_timeout(450)
         if len(collected) == last_n:
             stagnant += 1
         else:
             stagnant = 0
             last_n = len(collected)
-        if stagnant >= 10 and first_url:
+        if stagnant >= 6 and first_url:
             break
 
     # Pagination cursor explicite jusqu'au quota
     if first_url and len(collected) < max_items:
         cursor = last_cursor if last_cursor is not None else 0
-        page_loops = max(40, (max_items // 10) + 30)
+        page_loops = max(30, (max_items // 12) + 20)
         empty_streak = 0
         for _ in range(page_loops):
             if len(collected) >= max_items:
@@ -458,7 +462,7 @@ def _collect_from_api(
                 empty_streak += 1
                 if empty_streak >= 3:
                     break
-                time.sleep(0.4)
+                time.sleep(0.2)
                 continue
 
             data = result.get("data") or {}
@@ -476,14 +480,13 @@ def _collect_from_api(
 
             if not last_has_more or empty_streak >= 3:
                 break
-            time.sleep(0.25)
+            time.sleep(0.12)
 
     try:
         page.remove_listener("response", on_response)
     except Exception:
         pass
 
-    # Les plus récents d'abord (create_time), puis coupe au quota exact
     collected.sort(key=lambda x: int(x.get("create_time") or 0), reverse=True)
     return collected[:max_items]
 
@@ -511,17 +514,17 @@ def fetch_profile_quick(
     *,
     headless: bool = True,
 ) -> dict[str, Any]:
-    """Charge uniquement le profil (photo en data-URL + compteurs)."""
+    """Charge uniquement le profil (photo via URL CDN + compteurs)."""
     handle = extract_handle(profile_url)
     url = f"https://www.tiktok.com/@{handle}"
     p, browser, context = _browser_context(headless)
     try:
         page = context.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2200)
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1200)
         _dismiss_cookies(page)
-        page.wait_for_timeout(800)
-        return _extract_profile_from_page(page, handle)
+        page.wait_for_timeout(400)
+        return _extract_profile_from_page(page, handle, encode_avatar=False)
     finally:
         context.close()
         browser.close()
@@ -533,53 +536,51 @@ def fetch_profile_content(
     *,
     max_items: int = 100,
     headless: bool = True,
+    on_profile=None,
+    on_progress=None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """
-    Profil + posts perso + reposts.
-    Reposts = exactement les max_items plus récents (ou moins si le profil en a moins).
+    Profil + reposts (+ posts limités).
+    on_profile(profile) appelé dès que la bio/photo est lue (même session navigateur).
     """
     handle = extract_handle(profile_url)
     if max_items not in (100, 500, 1000):
         max_items = 100
     base = f"https://www.tiktok.com/@{handle}"
-    # Posts : même logique, plafonnés pour ne pas doubler le temps
-    max_posts = min(max_items, 200)
+    # Posts : échantillon réduit pour aller plus vite
+    max_posts = min(40, max_items)
+
+    def progress(msg: str) -> None:
+        if on_progress:
+            try:
+                on_progress(msg)
+            except Exception:
+                pass
 
     p, browser, context = _browser_context(headless)
     try:
         page = context.new_page()
-        page.goto(base, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2200)
+        progress("Ouverture du profil…")
+        page.goto(base, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1200)
         _dismiss_cookies(page)
-        page.wait_for_timeout(600)
+        page.wait_for_timeout(350)
 
-        profile = _extract_profile_from_page(page, handle)
+        profile = _extract_profile_from_page(page, handle, encode_avatar=False)
+        if on_profile:
+            try:
+                on_profile(dict(profile))
+            except Exception:
+                pass
 
-        # Posts (vidéos) — récents
-        _click_tab(page, ("Videos", "Vidéos", "Posts"))
-        page.wait_for_timeout(2000)
-        posts = _collect_from_api(
-            page,
-            api_substr="/api/post/item_list",
-            kind="post",
-            max_items=max_posts,
-        )
-        if not posts:
-            posts = _collect_from_api(
-                page,
-                api_substr="item_list",
-                kind="post",
-                max_items=min(max_posts, 40),
-            )
-
-        # Reposts — exactement les N plus récents demandés
+        # Reposts d'abord (priorité UX)
+        progress("Collecte des reposts…")
         if not _click_tab(page, ("Reposts", "Republiés", "Republier")):
             page.goto(f"{base}?tab=repost", wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(1400)
 
-        # Relecture des compteurs une fois l'onglet Reposts ouvert
-        profile_on_reposts = _extract_profile_from_page(page, handle)
-        for key in ("repost_count", "video_count", "nickname", "bio", "avatar"):
+        profile_on_reposts = _extract_profile_from_page(page, handle, encode_avatar=False)
+        for key in ("repost_count", "video_count", "nickname", "bio", "avatar_url"):
             new_v = profile_on_reposts.get(key)
             old_v = profile.get(key)
             if key in ("repost_count", "video_count"):
@@ -587,6 +588,11 @@ def fetch_profile_content(
                     profile[key] = int(new_v)
             elif new_v and not old_v:
                 profile[key] = new_v
+        if on_profile:
+            try:
+                on_profile(dict(profile))
+            except Exception:
+                pass
 
         api_total = {"repost": 0, "post": 0}
 
@@ -615,13 +621,23 @@ def fetch_profile_content(
             kind="repost",
             max_items=max_items,
         )
+
+        # Posts ensuite (échantillon)
+        progress("Lecture des posts…")
+        _click_tab(page, ("Videos", "Vidéos", "Posts"))
+        page.wait_for_timeout(1000)
+        posts = _collect_from_api(
+            page,
+            api_substr="/api/post/item_list",
+            kind="post",
+            max_items=max_posts,
+        )
         try:
             page.remove_listener("response", _capture_totals)
         except Exception:
             pass
 
-        # Après scroll : encore une passe compteurs onglet
-        again = _extract_profile_from_page(page, handle)
+        again = _extract_profile_from_page(page, handle, encode_avatar=False)
         if int(again.get("repost_count") or 0) > int(profile.get("repost_count") or 0):
             profile["repost_count"] = int(again["repost_count"])
         if api_total["repost"] > int(profile.get("repost_count") or 0):
@@ -641,11 +657,8 @@ def fetch_profile_content(
         profile["reposts_scraped"] = scraped_r
         profile["posts_scraped"] = scraped_p
 
-        # Total profil ≠ nombre scrapé : ne jamais écraser un vrai total
-        # par le nombre analysé. Si inconnu → null (UI affichera "analysés").
         known_total = int(profile.get("repost_count") or 0)
         if known_total < scraped_r:
-            # On a scrapé plus que le "total" lu → le total lu était faux / partiel
             profile["repost_count"] = scraped_r
             profile["repost_total_uncertain"] = True
         elif known_total == 0:
@@ -658,6 +671,7 @@ def fetch_profile_content(
         elif known_videos == 0 and scraped_p:
             profile["video_count"] = scraped_p
 
+        progress("Analyse IA…")
         return handle, posts, reposts, profile
     finally:
         context.close()

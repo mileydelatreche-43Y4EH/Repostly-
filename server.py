@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -38,9 +39,12 @@ class AnalyzeRequest(BaseModel):
     max_reposts: int = Field(100, ge=100, le=1000)
 
 
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    # Log immédiat (avant la fin de la requête — sinon Playwright = silence)
     if request.url.path.startswith("/api/"):
         log.info("→ %s %s", request.method, request.url.path)
     started = time.perf_counter()
@@ -118,7 +122,7 @@ async def api_avatar(u: str = Query(..., min_length=8, max_length=2000)):
 
 @app.post("/api/profile")
 async def api_profile(req: ProfileRequest):
-    """Photo + bio + compteurs — rapide, pour l'animation."""
+    """Photo + bio + compteurs — rapide (optionnel, le stream analyse suffit)."""
     headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
     handle = extract_handle(req.profile)
     log.info("profile quick start @%s (headless=%s)", handle, headless)
@@ -126,74 +130,125 @@ async def api_profile(req: ProfileRequest):
         profile = await asyncio.to_thread(
             fetch_profile_quick, req.profile, headless=headless
         )
-        has_photo = bool(profile.get("avatar") or profile.get("avatar_url"))
         log.info(
-            "profile quick ok @%s photo=%s nick=%s",
+            "profile quick ok @%s photo=%s",
             handle,
-            has_photo,
-            profile.get("nickname"),
+            bool(profile.get("avatar") or profile.get("avatar_url")),
         )
     except ValueError as e:
-        log.warning("profile quick bad request: %s", e)
         raise HTTPException(400, str(e)) from e
     except Exception as e:
-        log.exception("profile quick fail @%s: %s", handle, e)
+        log.exception("profile quick fail @%s", handle)
         raise HTTPException(502, f"Profil inaccessible : {e}") from e
     return profile
 
 
 @app.post("/api/analyze")
 async def api_analyze(req: AnalyzeRequest):
+    """Analyse en stream SSE : photo tôt, puis résultat final (1 seul navigateur)."""
     if not os.getenv("ANTHROPIC_API_KEY", "").strip():
-        log.error("ANTHROPIC_API_KEY manquante")
-        raise HTTPException(400, "ANTHROPIC_API_KEY manquante dans les variables d'environnement Render")
+        raise HTTPException(
+            400,
+            "ANTHROPIC_API_KEY manquante dans les variables d'environnement Render",
+        )
 
     allowed = {100, 500, 1000}
     max_items = req.max_reposts if req.max_reposts in allowed else 100
     headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
     handle = extract_handle(req.profile)
-    log.info("analyze start @%s max=%s", handle, max_items)
+    log.info("analyze stream start @%s max=%s", handle, max_items)
 
-    try:
-        handle, posts, reposts, profile = await asyncio.to_thread(
-            fetch_profile_content,
-            req.profile,
-            max_items=max_items,
-            headless=headless,
-        )
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        box: dict = {}
+
+        def emit(obj: dict) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, obj)
+
+        def on_profile(profile: dict) -> None:
+            log.info(
+                "stream profile @%s photo=%s",
+                handle,
+                bool(profile.get("avatar") or profile.get("avatar_url")),
+            )
+            emit({"type": "profile", "data": profile})
+
+        def on_progress(message: str) -> None:
+            emit({"type": "progress", "message": message})
+
+        def work() -> None:
+            try:
+                h, posts, reposts, profile = fetch_profile_content(
+                    req.profile,
+                    max_items=max_items,
+                    headless=headless,
+                    on_profile=on_profile,
+                    on_progress=on_progress,
+                )
+                box["ok"] = (h, posts, reposts, profile)
+            except Exception as e:
+                box["err"] = e
+            finally:
+                emit({"type": "_done"})
+
+        worker = asyncio.create_task(asyncio.to_thread(work))
+
+        while True:
+            ev = await queue.get()
+            if ev.get("type") == "_done":
+                break
+            yield _sse(ev)
+
+        await worker
+
+        if "err" in box:
+            err = box["err"]
+            log.exception("analyze fail @%s: %s", handle, err)
+            msg = str(err)
+            yield _sse({"type": "error", "detail": msg})
+            return
+
+        h, posts, reposts, profile = box["ok"]
         log.info(
-            "scrape ok @%s posts=%s reposts=%s photo=%s",
-            handle,
+            "scrape ok @%s posts=%s reposts=%s",
+            h,
             len(posts),
             len(reposts),
-            bool(profile.get("avatar") or profile.get("avatar_url")),
         )
-        analysis = await analyze_profile(handle, posts, reposts, profile)
-        log.info("claude ok @%s", handle)
-    except ValueError as e:
-        log.warning("analyze bad request: %s", e)
-        raise HTTPException(400, str(e)) from e
-    except RuntimeError as e:
-        log.warning("analyze runtime: %s", e)
-        raise HTTPException(400, str(e)) from e
-    except Exception as e:
-        log.exception("analyze fail @%s: %s", handle, e)
-        raise HTTPException(502, f"Erreur scrape/analyse : {e}") from e
+        yield _sse({"type": "progress", "message": "Analyse IA…"})
+        try:
+            analysis = await analyze_profile(h, posts, reposts, profile)
+        except Exception as e:
+            log.exception("claude fail @%s", h)
+            yield _sse({"type": "error", "detail": f"Erreur Claude : {e}"})
+            return
 
-    return {
-        "handle": handle,
-        "reposts_count": len(reposts),
-        "posts_count": len(posts),
-        "reposts_requested": max_items,
-        "repost_total": int(profile.get("repost_count") or 0),
-        "video_total": int(profile.get("video_count") or 0),
-        "repost_total_unknown": bool(profile.get("repost_total_unknown")),
-        "posts": posts[:24],
-        "reposts": reposts[:24],
-        "profile": profile,
-        "analysis": analysis,
-        "source": "local",
-    }
+        log.info("claude ok @%s", h)
+        payload = {
+            "handle": h,
+            "reposts_count": len(reposts),
+            "posts_count": len(posts),
+            "reposts_requested": max_items,
+            "repost_total": int(profile.get("repost_count") or 0),
+            "video_total": int(profile.get("video_count") or 0),
+            "repost_total_unknown": bool(profile.get("repost_total_unknown")),
+            "posts": posts[:24],
+            "reposts": reposts[:24],
+            "profile": profile,
+            "analysis": analysis,
+            "source": "local",
+        }
+        yield _sse({"type": "result", "data": payload})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

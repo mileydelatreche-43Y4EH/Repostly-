@@ -686,46 +686,67 @@
     const timeout = setTimeout(() => controller.abort(), 15 * 60 * 1000);
 
     try {
-      try {
-        const pr = await fetch("/api/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({ profile: url }),
-        });
-        const quick = await pr.json().catch(() => ({}));
-        if (pr.ok) {
-          applyQuickProfile(quick, handle);
-          scanStep.textContent = "Profil trouvé — analyse…";
-        } else {
-          console.warn("profile preview", pr.status, quick);
-          scanStep.textContent = "Profil lent — analyse…";
-        }
-      } catch (err) {
-        console.warn("profile preview fail", err);
-        scanStep.textContent = "Profil lent — analyse…";
-      }
-
+      // 1 seul appel stream : photo dès que possible, puis résultat
       const res = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         signal: controller.signal,
         body: JSON.stringify({
           profile: url,
           max_reposts: Number(maxEl.value),
         }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(apiError(data));
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(apiError(errBody));
+      }
 
-      const p = data.profile || {};
-      applyQuickProfile(p, handle);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalData = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() || "";
+
+        for (const chunk of chunks) {
+          const line = chunk
+            .split("\n")
+            .map((l) => l.trim())
+            .find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          let ev;
+          try {
+            ev = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (ev.type === "profile" && ev.data) {
+            applyQuickProfile(ev.data, handle);
+            scanStep.textContent = "Profil trouvé — analyse…";
+          } else if (ev.type === "progress" && ev.message) {
+            scanStep.textContent = ev.message;
+          } else if (ev.type === "error") {
+            throw new Error(ev.detail || "Erreur analyse");
+          } else if (ev.type === "result" && ev.data) {
+            finalData = ev.data;
+          }
+        }
+      }
+
+      if (!finalData) throw new Error("Analyse interrompue — réessaie.");
+
+      applyQuickProfile(finalData.profile || {}, handle);
       scanStep.textContent = "Portrait prêt";
-      await new Promise((r) => setTimeout(r, 450));
+      await new Promise((r) => setTimeout(r, 350));
 
       stopScanUI();
-      await saveRecent(data);
-      render(data);
+      await saveRecent(finalData);
+      render(finalData);
     } catch (err) {
       stopScanUI();
       showView("home");
