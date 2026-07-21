@@ -753,7 +753,9 @@
       const msg =
         err.name === "AbortError"
           ? "Timeout — réduis le nombre de reposts."
-          : err.message || "Erreur";
+          : /fetch|network|load failed|erreur serveur/i.test(String(err.message || ""))
+            ? "Connexion coupée (souvent manque de RAM sur Render Free). Réessaie avec 100, ou utilise le plan Starter."
+            : err.message || "Erreur";
       setStatus(msg, "error");
     } finally {
       clearTimeout(timeout);

@@ -3,9 +3,11 @@ services:
     name: repostly
     runtime: docker
     plan: free
-    healthCheckPath: /
+    healthCheckPath: /api/health
     envVars:
       - key: SCRAPE_HEADLESS
+        value: "1"
+      - key: SCRAPE_LIGHT
         value: "1"
       - key: ANTHROPIC_API_KEY
         sync: false

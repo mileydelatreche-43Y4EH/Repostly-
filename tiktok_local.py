@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
 import time
 from typing import Any
@@ -492,20 +493,51 @@ def _collect_from_api(
 
 
 def _browser_context(headless: bool):
+    light = os.getenv("SCRAPE_LIGHT", "1").strip() not in ("0", "false", "False")
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-default-apps",
+        "--disable-sync",
+        "--no-first-run",
+        "--mute-audio",
+        "--hide-scrollbars",
+        "--disable-software-rasterizer",
+    ]
+    if light:
+        # Render Free ~512 Mo : Chromium doit rester minimal
+        args += [
+            "--single-process",
+            "--renderer-process-limit=1",
+            "--js-flags=--max-old-space-size=192",
+        ]
+
     p = sync_playwright().start()
-    browser = p.chromium.launch(
-        headless=headless,
-        args=["--disable-blink-features=AutomationControlled"],
-    )
+    browser = p.chromium.launch(headless=headless, args=args)
     context = browser.new_context(
-        viewport={"width": 1365, "height": 900},
+        viewport={"width": 900, "height": 720} if light else {"width": 1280, "height": 860},
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0.0.0 Safari/537.36"
         ),
         locale="en-US",
+        java_script_enabled=True,
     )
+    # Moins de cache / images lourdes en mode léger
+    if light:
+        context.route(
+            "**/*",
+            lambda route: (
+                route.abort()
+                if route.request.resource_type in ("media", "font")
+                else route.continue_()
+            ),
+        )
     return p, browser, context
 
 
@@ -546,9 +578,14 @@ def fetch_profile_content(
     handle = extract_handle(profile_url)
     if max_items not in (100, 500, 1000):
         max_items = 100
+
+    light = os.getenv("SCRAPE_LIGHT", "1").strip() not in ("0", "false", "False")
+    # Sur Free Render, plafonner pour éviter OOM
+    if light and max_items > 100:
+        max_items = 100
+
     base = f"https://www.tiktok.com/@{handle}"
-    # Posts : échantillon réduit pour aller plus vite
-    max_posts = min(40, max_items)
+    max_posts = 0 if light else min(40, max_items)
 
     def progress(msg: str) -> None:
         if on_progress:
@@ -622,16 +659,18 @@ def fetch_profile_content(
             max_items=max_items,
         )
 
-        # Posts ensuite (échantillon)
-        progress("Lecture des posts…")
-        _click_tab(page, ("Videos", "Vidéos", "Posts"))
-        page.wait_for_timeout(1000)
-        posts = _collect_from_api(
-            page,
-            api_substr="/api/post/item_list",
-            kind="post",
-            max_items=max_posts,
-        )
+        # Posts ensuite (échantillon) — sauté en mode léger (RAM)
+        posts: list[dict[str, Any]] = []
+        if max_posts > 0:
+            progress("Lecture des posts…")
+            _click_tab(page, ("Videos", "Vidéos", "Posts"))
+            page.wait_for_timeout(1000)
+            posts = _collect_from_api(
+                page,
+                api_substr="/api/post/item_list",
+                kind="post",
+                max_items=max_posts,
+            )
         try:
             page.remove_listener("response", _capture_totals)
         except Exception:
