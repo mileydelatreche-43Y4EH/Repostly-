@@ -587,7 +587,7 @@ def fetch_profile_content(
         _dismiss_cookies(page)
         page.wait_for_timeout(350)
 
-        profile = _extract_profile_from_page(page, handle, encode_avatar=False)
+        profile = _extract_profile_from_page(page, handle, encode_avatar=True)
         if on_profile:
             try:
                 on_profile(dict(profile))
@@ -601,15 +601,19 @@ def fetch_profile_content(
         page.wait_for_timeout(1400)
 
         profile_on_reposts = _extract_profile_from_page(page, handle, encode_avatar=False)
-        for key in ("repost_count", "video_count", "nickname", "bio", "avatar_url"):
+        for key in ("repost_count", "video_count", "nickname", "bio", "avatar", "avatar_url"):
             new_v = profile_on_reposts.get(key)
             old_v = profile.get(key)
             if key in ("repost_count", "video_count"):
                 if int(new_v or 0) > int(old_v or 0):
                     profile[key] = int(new_v)
+            elif key == "avatar":
+                # garder la data-URL déjà envoyée au front
+                if new_v and not old_v:
+                    profile[key] = new_v
             elif new_v and not old_v:
                 profile[key] = new_v
-        if on_profile:
+        if on_profile and (profile.get("avatar") or profile.get("avatar_url")):
             try:
                 on_profile(dict(profile))
             except Exception:

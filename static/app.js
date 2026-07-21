@@ -117,7 +117,10 @@
   function applyQuickProfile(p, handle) {
     if (!p) return;
     const letter = p.nickname || handle;
-    const photo = resolveAvatarUrl(p, p.avatar || "");
+    // data-URL en priorité (marche tout de suite) ; sinon proxy CDN
+    const photo =
+      (p.avatar && String(p.avatar).startsWith("data:") ? p.avatar : "") ||
+      resolveAvatarUrl(p, p.avatar || "");
     setAvatar(scanAvatar, scanFallback, photo, letter);
     if (p.nickname) scanName.textContent = p.nickname;
   }
