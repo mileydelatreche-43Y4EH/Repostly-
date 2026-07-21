@@ -323,24 +323,105 @@ def _dismiss_cookies(page) -> None:
     for sel in (
         'button:has-text("Accept all")',
         'button:has-text("Allow all")',
+        'button:has-text("Accept Cookies")',
         'button:has-text("Tout accepter")',
+        'button:has-text("Accepter")',
         'button:has-text("Accept")',
+        '[data-e2e="cookie-banner-accept"]',
     ):
         try:
             btn = page.locator(sel).first
             if btn.count() and btn.is_visible():
                 btn.click(timeout=1500)
+                page.wait_for_timeout(300)
                 break
         except Exception:
             pass
+    # Cookiebot / OneTrust souvent dans un iframe ou shadow
+    try:
+        page.evaluate(
+            """() => {
+              const roots = [document];
+              const walk = (node) => {
+                if (!node) return false;
+                const btns = node.querySelectorAll
+                  ? node.querySelectorAll('button, [role="button"]')
+                  : [];
+                for (const b of btns) {
+                  const t = (b.textContent || '').toLowerCase();
+                  if (
+                    t.includes('accept all') ||
+                    t.includes('allow all') ||
+                    t.includes('tout accepter') ||
+                    t.includes('accepter tout')
+                  ) {
+                    b.click();
+                    return true;
+                  }
+                }
+                return false;
+              };
+              if (walk(document)) return;
+              document.querySelectorAll('*').forEach((el) => {
+                if (el.shadowRoot) walk(el.shadowRoot);
+              });
+            }"""
+        )
+    except Exception:
+        pass
+
+
+def _page_looks_blocked(page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const t = ((document.body && document.body.innerText) || '').toLowerCase();
+                  const title = (document.title || '').toLowerCase();
+                  if (title.includes('captcha') || t.includes('verify to continue')) return true;
+                  if (t.includes('are you a human') || t.includes('unusual traffic')) return true;
+                  if (document.querySelector('#captcha-verify-container, .captcha-verify-container')) return true;
+                  return false;
+                }"""
+            )
+        )
+    except Exception:
+        return False
 
 
 def _click_tab(page, labels: tuple[str, ...]) -> bool:
+    # data-e2e TikTok d'abord
+    for e2e in (
+        'a[data-e2e="user-repost"]',
+        'p[data-e2e="user-repost"]',
+        'div[data-e2e="user-repost"]',
+        '[data-e2e="repost-tab"]',
+        'a[data-e2e="user-post"]',
+        'p[data-e2e="user-post"]',
+    ):
+        label_hint = labels[0].lower() if labels else ""
+        if "repost" in e2e and "repost" not in label_hint and "repub" not in label_hint:
+            continue
+        if "post" in e2e and "repost" not in e2e:
+            if not any(x.lower() in ("videos", "vidéos", "posts") for x in labels):
+                continue
+        try:
+            tab = page.locator(e2e).first
+            if tab.count():
+                tab.click(timeout=2500)
+                return True
+        except Exception:
+            continue
+
     for label in labels:
         for sel in (
             f'div[role="tab"]:has-text("{label}")',
+            f'a[role="tab"]:has-text("{label}")',
+            f'p[role="tab"]:has-text("{label}")',
+            f'[data-e2e*="tab"]:has-text("{label}")',
             f'p:has-text("{label}")',
             f'span:has-text("{label}")',
+            f'a:has-text("{label}")',
         ):
             try:
                 tab = page.locator(sel).first
@@ -349,7 +430,146 @@ def _click_tab(page, labels: tuple[str, ...]) -> bool:
                     return True
             except Exception:
                 continue
+    # Clic JS par texte exact/partiel sur les onglets
+    try:
+        hit = page.evaluate(
+            """(labels) => {
+              const nodes = [
+                ...document.querySelectorAll('[role="tab"]'),
+                ...document.querySelectorAll('[data-e2e*="tab"], [data-e2e*="repost"], [data-e2e*="post"]'),
+                ...document.querySelectorAll('p, span, a, div'),
+              ];
+              const lower = labels.map((l) => l.toLowerCase());
+              for (const n of nodes) {
+                const txt = (n.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (txt.length > 40) continue;
+                const tl = txt.toLowerCase();
+                if (lower.some((l) => tl === l || tl.includes(l))) {
+                  n.click();
+                  return true;
+                }
+              }
+              return false;
+            }""",
+            list(labels),
+        )
+        return bool(hit)
+    except Exception:
+        return False
+
+
+def _api_url_matches(url: str, api_substr: str) -> bool:
+    u = (url or "").lower()
+    key = (api_substr or "").lower()
+    if key in u:
+        return True
+    # Variantes TikTok
+    if "repost" in key and ("repost/item_list" in u or "repost_item_list" in u):
+        return True
+    if "post/item_list" in key and "post/item_list" in u and "repost" not in u:
+        return True
     return False
+
+
+def _extract_embedded_items(page, *, kind: str) -> list[dict[str, Any]]:
+    """Items déjà présents dans __UNIVERSAL_DATA__ / SIGI (sans XHR)."""
+    raw_items = page.evaluate(
+        """() => {
+          const out = [];
+          const pushList = (lst) => {
+            if (!Array.isArray(lst)) return;
+            for (const x of lst) if (x && typeof x === 'object') out.push(x);
+          };
+          try {
+            const script = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+            if (script && script.textContent) {
+              const json = JSON.parse(script.textContent);
+              const scope = json?.__DEFAULT_SCOPE__ || {};
+              for (const val of Object.values(scope)) {
+                pushList(val?.itemList);
+                pushList(val?.items);
+                pushList(val?.repostList);
+                if (val?.userDetail?.itemList) pushList(val.userDetail.itemList);
+                if (Array.isArray(val)) {
+                  for (const inner of val) {
+                    pushList(inner?.itemList);
+                    pushList(inner?.items);
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+          try {
+            const sigi = document.getElementById('SIGI_STATE');
+            if (sigi && sigi.textContent) {
+              const json = JSON.parse(sigi.textContent);
+              const im = json?.ItemModule;
+              if (im && typeof im === 'object') {
+                for (const v of Object.values(im)) if (v && typeof v === 'object') out.push(v);
+              }
+            }
+          } catch (e) {}
+          return out;
+        }"""
+    )
+    collected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if not isinstance(raw_items, list):
+        return collected
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        norm = _normalize_item(raw, kind=kind)
+        if not norm:
+            continue
+        vid = norm.get("id") or ""
+        if vid and vid in seen:
+            continue
+        if vid:
+            seen.add(vid)
+        collected.append(norm)
+    return collected
+
+
+def _extract_dom_items(page, *, kind: str) -> list[dict[str, Any]]:
+    """Fallback : liens vidéo visibles dans la grille."""
+    rows = page.evaluate(
+        """() => {
+          const out = [];
+          const seen = new Set();
+          const anchors = [...document.querySelectorAll('a[href*="/video/"]')];
+          for (const a of anchors) {
+            const href = a.href || a.getAttribute('href') || '';
+            const m = href.match(/@([^/]+)\\/video\\/(\\d+)/);
+            if (!m) continue;
+            const id = m[2];
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const img = a.querySelector('img');
+            const caption =
+              (a.getAttribute('aria-label') || '') ||
+              (img && (img.getAttribute('alt') || '')) ||
+              '';
+            out.push({
+              id,
+              author: m[1],
+              desc: caption.slice(0, 400),
+              video: { cover: (img && img.src) || '' },
+            });
+          }
+          return out;
+        }"""
+    )
+    collected: list[dict[str, Any]] = []
+    if not isinstance(rows, list):
+        return collected
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        norm = _normalize_item(raw, kind=kind)
+        if norm:
+            collected.append(norm)
+    return collected
 
 
 def _with_count(url: str, count: int = 35) -> str:
@@ -373,6 +593,8 @@ def _collect_from_api(
     api_substr: str,
     kind: str,
     max_items: int,
+    seed_items: list[dict[str, Any]] | None = None,
+    seed_url: str = "",
 ) -> list[dict[str, Any]]:
     """
     Collecte les max_items plus récents (ordre API + tri create_time).
@@ -380,9 +602,20 @@ def _collect_from_api(
     """
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    first_url = ""
+    first_url = seed_url or ""
     last_cursor: int | str | None = None
     last_has_more = True
+
+    if seed_items:
+        for item in seed_items:
+            if not isinstance(item, dict):
+                continue
+            vid = str(item.get("id") or "")
+            if vid and vid in seen:
+                continue
+            if vid:
+                seen.add(vid)
+            collected.append(item)
 
     def ingest(payload: Any) -> int:
         nonlocal last_cursor, last_has_more
@@ -407,7 +640,7 @@ def _collect_from_api(
     def on_response(response) -> None:
         nonlocal first_url
         url = response.url
-        if api_substr not in url:
+        if not _api_url_matches(url, api_substr):
             return
         try:
             if response.status != 200:
@@ -424,7 +657,7 @@ def _collect_from_api(
     # Phase 1 — scroll (ne pas abandonner trop tôt)
     scroll_rounds = max(40, min(160, max_items + 30))
     stagnant = 0
-    last_n = 0
+    last_n = len(collected)
     for _ in range(scroll_rounds):
         if len(collected) >= max_items:
             break
@@ -531,6 +764,7 @@ def _browser_context(headless: bool):
         "--mute-audio",
         "--hide-scrollbars",
         "--disable-software-rasterizer",
+        "--disable-features=IsolateOrigins,site-per-process",
     ]
     # Pas de --single-process : ça freeze souvent Chromium sur Render
 
@@ -543,8 +777,32 @@ def _browser_context(headless: bool):
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0.0.0 Safari/537.36"
         ),
-        locale="en-US",
+        locale="fr-FR",
+        timezone_id="Europe/Paris",
         java_script_enabled=True,
+        color_scheme="dark",
+        extra_http_headers={
+            "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+        },
+    )
+    # Masquer navigator.webdriver (sinon TikTok coupe souvent les XHR)
+    context.add_init_script(
+        """
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        window.chrome = window.chrome || { runtime: {} };
+        Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5],
+        });
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+          parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(parameters);
+        """
     )
     return p, browser, context
 
@@ -607,9 +865,16 @@ def fetch_profile_content(
         page = context.new_page()
         progress("Ouverture du profil…")
         page.goto(base, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(1500)
         _dismiss_cookies(page)
-        page.wait_for_timeout(350)
+        page.wait_for_timeout(500)
+
+        if _page_looks_blocked(page):
+            progress("Challenge TikTok détecté — nouvel essai…")
+            page.wait_for_timeout(2000)
+            page.reload(wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(1500)
+            _dismiss_cookies(page)
 
         profile = _extract_profile_from_page(page, handle, encode_avatar=True)
         if on_profile:
@@ -618,11 +883,68 @@ def fetch_profile_content(
             except Exception:
                 pass
 
-        # Reposts d'abord (priorité UX)
-        progress("Collecte des reposts…")
-        if not _click_tab(page, ("Reposts", "Republiés", "Republier")):
-            page.goto(f"{base}?tab=repost", wait_until="domcontentloaded")
-        page.wait_for_timeout(1400)
+        api_total = {"repost": 0, "post": 0}
+        early_reposts: list[dict[str, Any]] = []
+        early_seen: set[str] = set()
+        early_repost_url = ""
+
+        def _capture_early(response) -> None:
+            nonlocal early_repost_url
+            url = response.url
+            try:
+                if response.status != 200:
+                    return
+                if _api_url_matches(url, "/api/repost/item_list"):
+                    if not early_repost_url:
+                        early_repost_url = url
+                    data = response.json()
+                    tot = data.get("total") or data.get("totalCount") or data.get("total_count")
+                    if tot:
+                        api_total["repost"] = max(api_total["repost"], _int(tot))
+                    for raw in _items_from_payload(data):
+                        norm = _normalize_item(raw, kind="repost")
+                        if not norm:
+                            continue
+                        vid = norm.get("id") or ""
+                        if vid and vid in early_seen:
+                            continue
+                        if vid:
+                            early_seen.add(vid)
+                        early_reposts.append(norm)
+                if _api_url_matches(url, "/api/post/item_list"):
+                    data = response.json()
+                    tot = data.get("total") or data.get("totalCount") or data.get("total_count")
+                    if tot:
+                        api_total["post"] = max(api_total["post"], _int(tot))
+            except Exception:
+                pass
+
+        # Écouter AVANT le clic onglet (sinon on rate le 1er batch XHR)
+        page.on("response", _capture_early)
+
+        progress("Ouverture de l'onglet Reposts…")
+        opened = _click_tab(page, ("Reposts", "Republiés", "Republier", "Repost"))
+        if not opened:
+            page.goto(f"{base}?tab=repost", wait_until="domcontentloaded", timeout=45000)
+        else:
+            # Forcer aussi l'URL tab=repost (TikTok charge parfois mieux)
+            try:
+                if "tab=repost" not in (page.url or ""):
+                    page.goto(f"{base}?tab=repost", wait_until="domcontentloaded", timeout=45000)
+            except Exception:
+                pass
+        page.wait_for_timeout(2000)
+        _dismiss_cookies(page)
+
+        # Attendre un XHR repost si possible
+        try:
+            page.wait_for_response(
+                lambda r: _api_url_matches(r.url, "/api/repost/item_list") and r.status == 200,
+                timeout=8000,
+            )
+        except Exception:
+            pass
+        page.wait_for_timeout(800)
 
         profile_on_reposts = _extract_profile_from_page(page, handle, encode_avatar=False)
         for key in ("repost_count", "video_count", "nickname", "bio", "avatar", "avatar_url"):
@@ -632,7 +954,6 @@ def fetch_profile_content(
                 if int(new_v or 0) > int(old_v or 0):
                     profile[key] = int(new_v)
             elif key == "avatar":
-                # garder la data-URL déjà envoyée au front
                 if new_v and not old_v:
                     profile[key] = new_v
             elif new_v and not old_v:
@@ -643,34 +964,56 @@ def fetch_profile_content(
             except Exception:
                 pass
 
-        api_total = {"repost": 0, "post": 0}
-
-        def _capture_totals(response) -> None:
-            url = response.url
-            try:
-                if response.status != 200:
-                    return
-                if "/api/repost/item_list" in url:
-                    data = response.json()
-                    tot = data.get("total") or data.get("totalCount") or data.get("total_count")
-                    if tot:
-                        api_total["repost"] = max(api_total["repost"], _int(tot))
-                if "/api/post/item_list" in url:
-                    data = response.json()
-                    tot = data.get("total") or data.get("totalCount") or data.get("total_count")
-                    if tot:
-                        api_total["post"] = max(api_total["post"], _int(tot))
-            except Exception:
-                pass
-
-        page.on("response", _capture_totals)
         progress(f"Collecte des reposts (cible {max_items})…")
         reposts = _collect_from_api(
             page,
             api_substr="/api/repost/item_list",
             kind="repost",
             max_items=max_items,
+            seed_items=list(early_reposts),
+            seed_url=early_repost_url,
         )
+
+        # Fallbacks si XHR vide (blocage partiel / onglet raté)
+        if len(reposts) < 5:
+            progress("Peu de XHR — fallback données page…")
+            for src in (
+                _extract_embedded_items(page, kind="repost"),
+                _extract_dom_items(page, kind="repost"),
+            ):
+                seen_ids = {str(x.get("id") or "") for x in reposts if x.get("id")}
+                for item in src:
+                    vid = str(item.get("id") or "")
+                    if vid and vid in seen_ids:
+                        continue
+                    if vid:
+                        seen_ids.add(vid)
+                    reposts.append(item)
+                if len(reposts) >= max_items:
+                    break
+            reposts = reposts[:max_items]
+
+        # 2e tentative navigateur si toujours vide
+        if not reposts and not _page_looks_blocked(page):
+            progress("Aucun repost — nouvel essai…")
+            try:
+                page.goto(f"{base}?tab=repost", wait_until="networkidle", timeout=35000)
+            except Exception:
+                page.goto(f"{base}?tab=repost", wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(2500)
+            _click_tab(page, ("Reposts", "Republiés", "Republier", "Repost"))
+            page.wait_for_timeout(1500)
+            more = _collect_from_api(
+                page,
+                api_substr="/api/repost/item_list",
+                kind="repost",
+                max_items=max_items,
+            )
+            if more:
+                reposts = more
+            if not reposts:
+                reposts = _extract_dom_items(page, kind="repost")[:max_items]
+
         progress(f"{len(reposts)} reposts récupérés…")
 
         # Posts ensuite (échantillon) — sauté en mode léger (RAM)
@@ -686,7 +1029,7 @@ def fetch_profile_content(
                 max_items=max_posts,
             )
         try:
-            page.remove_listener("response", _capture_totals)
+            page.remove_listener("response", _capture_early)
         except Exception:
             pass
 
@@ -699,8 +1042,11 @@ def fetch_profile_content(
             profile["video_count"] = api_total["post"]
 
         if not posts and not reposts:
+            blocked = _page_looks_blocked(page)
             raise RuntimeError(
-                "Aucun contenu trouvé (posts / reposts). Profil privé, onglets masqués, "
+                "TikTok a bloqué le scrape (captcha / bot detection)."
+                if blocked
+                else "Aucun contenu trouvé (posts / reposts). Profil privé, onglets masqués, "
                 "ou TikTok a bloqué le navigateur."
             )
 
