@@ -251,6 +251,8 @@ async def api_analyze(req: AnalyzeRequest):
             "repost_total": int(profile.get("repost_count") or 0),
             "video_total": int(profile.get("video_count") or 0),
             "repost_total_unknown": bool(profile.get("repost_total_unknown")),
+            "repost_total_uncertain": bool(profile.get("repost_total_uncertain")),
+            "repost_incomplete": bool(profile.get("repost_incomplete")),
             "posts": posts[:24],
             "reposts": reposts[:24],
             "profile": profile,

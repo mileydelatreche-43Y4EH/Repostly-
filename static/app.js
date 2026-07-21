@@ -563,22 +563,30 @@
     }
 
     const scraped = Number(data.reposts_count || reposts.length || 0);
+    const requested = Number(data.reposts_requested || p.reposts_requested || scraped);
     const total = Number(data.repost_total || p.repost_count || 0);
-    const unknown = Boolean(data.repost_total_unknown);
+    const unknown = Boolean(
+      data.repost_total_unknown ||
+        data.repost_total_uncertain ||
+        p.repost_total_unknown ||
+        p.repost_total_uncertain,
+    );
+    const incomplete = Boolean(data.repost_incomplete) || scraped < requested;
     const countEl = document.getElementById("res-count");
     const analyzedEl = document.getElementById("res-analyzed");
 
-    if (!unknown && total > 0) {
+    if (total > scraped && total > 0) {
       countEl.textContent = `${total} repost${total === 1 ? "" : "s"}`;
-      if (scraped > 0 && scraped < total) {
-        analyzedEl.textContent = `${scraped} analysés`;
-        analyzedEl.classList.remove("hidden");
-      } else if (scraped > 0 && scraped === total) {
-        analyzedEl.textContent = "tous analysés";
-        analyzedEl.classList.remove("hidden");
-      } else {
-        analyzedEl.classList.add("hidden");
-      }
+      analyzedEl.textContent = `${scraped} analysés`;
+      analyzedEl.classList.remove("hidden");
+    } else if (incomplete) {
+      countEl.textContent = `${scraped} analysés / ${requested}`;
+      analyzedEl.textContent = "TikTok a limité le scrape";
+      analyzedEl.classList.remove("hidden");
+    } else if (!unknown && total > 0 && scraped >= total) {
+      countEl.textContent = `${total} repost${total === 1 ? "" : "s"}`;
+      analyzedEl.textContent = "échantillon complet";
+      analyzedEl.classList.remove("hidden");
     } else {
       countEl.textContent = `${scraped} repost${scraped === 1 ? "" : "s"} analysés`;
       analyzedEl.classList.add("hidden");

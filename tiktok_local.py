@@ -421,29 +421,30 @@ def _collect_from_api(
 
     page.on("response", on_response)
 
-    # Scroll plus agressif (moins d'attente entre chaque)
-    scroll_rounds = max(20, min(90, (max_items // 10) + 15))
+    # Phase 1 — scroll (ne pas abandonner trop tôt)
+    scroll_rounds = max(40, min(160, max_items + 30))
     stagnant = 0
     last_n = 0
     for _ in range(scroll_rounds):
         if len(collected) >= max_items:
             break
-        page.mouse.wheel(0, 3600)
-        page.wait_for_timeout(450)
+        page.mouse.wheel(0, 4200)
+        page.wait_for_timeout(550)
         if len(collected) == last_n:
             stagnant += 1
         else:
             stagnant = 0
             last_n = len(collected)
-        if stagnant >= 6 and first_url:
+        # 12 scrolls sans nouveau = on passe à la pagination API
+        if stagnant >= 12:
             break
 
-    # Pagination cursor explicite jusqu'au quota
+    # Phase 2 — pagination cursor jusqu'au quota demandé
     if first_url and len(collected) < max_items:
         cursor = last_cursor if last_cursor is not None else 0
-        page_loops = max(30, (max_items // 12) + 20)
+        page_loops = max(60, max_items // 5 + 40)
         empty_streak = 0
-        for _ in range(page_loops):
+        for i in range(page_loops):
             if len(collected) >= max_items:
                 break
             next_url = _with_count(_with_cursor(first_url, cursor), 35)
@@ -454,20 +455,28 @@ def _collect_from_api(
                       if (!r.ok) return { ok: false, status: r.status };
                       return { ok: true, data: await r.json() };
                     } catch (e) {
-                      return { ok: false };
+                      return { ok: false, error: String(e) };
                     }
                 }""",
                 next_url,
             )
             if not result or not result.get("ok"):
                 empty_streak += 1
-                if empty_streak >= 3:
+                if empty_streak >= 5:
                     break
-                time.sleep(0.2)
+                page.mouse.wheel(0, 2400)
+                page.wait_for_timeout(700)
                 continue
 
             data = result.get("data") or {}
+            before = len(collected)
             added = ingest(data)
+            # Toujours prendre le cursor renvoyé par TikTok
+            if isinstance(data, dict):
+                if data.get("cursor") is not None:
+                    last_cursor = data.get("cursor")
+                elif data.get("maxCursor") is not None:
+                    last_cursor = data.get("maxCursor")
             cursor = last_cursor if last_cursor is not None else cursor
             try:
                 cursor = int(cursor) if cursor is not None else 0
@@ -479,9 +488,24 @@ def _collect_from_api(
             else:
                 empty_streak = 0
 
-            if not last_has_more or empty_streak >= 3:
+            # hasMore=false : on arrête seulement si vraiment plus rien de nouveau
+            has_more = bool(data.get("hasMore") or data.get("has_more"))
+            if last_has_more is False or has_more is False:
+                if added == 0:
+                    break
+            if empty_streak >= 5:
                 break
-            time.sleep(0.12)
+
+            # Garder la session TikTok active
+            if i % 2 == 0:
+                page.mouse.wheel(0, 1800)
+                page.wait_for_timeout(350)
+            else:
+                time.sleep(0.15)
+
+            # Sécurité : si on n'avance plus du tout
+            if len(collected) == before and empty_streak >= 3:
+                page.wait_for_timeout(800)
 
     try:
         page.remove_listener("response", on_response)
@@ -640,12 +664,14 @@ def fetch_profile_content(
                 pass
 
         page.on("response", _capture_totals)
+        progress(f"Collecte des reposts (cible {max_items})…")
         reposts = _collect_from_api(
             page,
             api_substr="/api/repost/item_list",
             kind="repost",
             max_items=max_items,
         )
+        progress(f"{len(reposts)} reposts récupérés…")
 
         # Posts ensuite (échantillon) — sauté en mode léger (RAM)
         posts: list[dict[str, Any]] = []
@@ -683,14 +709,19 @@ def fetch_profile_content(
         profile["reposts_requested"] = max_items
         profile["reposts_scraped"] = scraped_r
         profile["posts_scraped"] = scraped_p
+        profile["repost_incomplete"] = scraped_r < max_items
 
         known_total = int(profile.get("repost_count") or 0)
-        if known_total < scraped_r:
+        # Ne jamais faire croire que le total = le scrapé si on n'a pas atteint la cible
+        if known_total == 0:
+            profile["repost_total_unknown"] = True
+            # garde 0 côté total ; l'UI affichera "X analysés / cible Y"
+        elif known_total < scraped_r:
             profile["repost_count"] = scraped_r
             profile["repost_total_uncertain"] = True
-        elif known_total == 0:
-            profile["repost_count"] = 0
-            profile["repost_total_unknown"] = True
+
+        if scraped_r < max_items:
+            profile["repost_total_uncertain"] = True
 
         known_videos = int(profile.get("video_count") or 0)
         if known_videos < scraped_p:
