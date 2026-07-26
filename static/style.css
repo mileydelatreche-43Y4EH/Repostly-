@@ -440,8 +440,43 @@ html.dark .theme-toggle .icon-sun {
   border-radius: 12px;
   background: var(--input);
   border: 1px solid var(--line);
-  max-height: none;
 }
+
+.arch-transcript mark.kw-hit,
+.arch-caption mark.kw-hit {
+  color: #ff2d55;
+  background: rgba(255, 45, 85, 0.14);
+  font-weight: 700;
+  padding: 0 0.12em;
+  border-radius: 3px;
+}
+
+html.dark .arch-transcript mark.kw-hit,
+html.dark .arch-caption mark.kw-hit {
+  color: #ff453a;
+  background: rgba(255, 69, 58, 0.22);
+}
+
+.pill.kw-pill {
+  background: rgba(255, 45, 85, 0.14);
+  color: #ff2d55;
+  font-weight: 700;
+}
+
+html.dark .pill.kw-pill {
+  background: rgba(255, 69, 58, 0.22);
+  color: #ff453a;
+}
+
+.arch-item.has-keyword {
+  border-color: rgba(255, 45, 85, 0.45);
+  box-shadow: 0 0 0 1px rgba(255, 45, 85, 0.2), var(--shadow);
+}
+
+.arch-item.kw-hidden {
+  display: none;
+}
+
 
 .arch-links {
   display: flex;

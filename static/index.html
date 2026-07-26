@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=29" />
+  <link rel="stylesheet" href="/static/style.css?v=30" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="Thème">
@@ -112,10 +112,10 @@
             </div>
             <label class="check-row">
               <input type="checkbox" id="transcribe" checked />
-              <span>Transcrire la parole (Whisper ≈ 0,006&nbsp;$/min — OPENAI_API_KEY dans .env)</span>
+              <span>Extraire le texte des paroles (pas de voix) — mot-clé <strong>cheaterbuster</strong> en rouge</span>
             </label>
             <p class="hint">
-              Mode local : qualité max, jusqu’à 500 vidéos, fichiers dans <code>data/archives/</code>.
+              Local : jusqu’à 500 vidéos → <code>data/archives/</code>. On affiche le texte pour repérer « cheaterbuster ».
             </p>
           </div>
         </form>
@@ -254,6 +254,7 @@
             <span id="arch-count" class="pill soft"></span>
             <span id="arch-found" class="pill soft hidden"></span>
             <span id="arch-tx" class="pill soft"></span>
+            <span id="arch-keyword" class="pill kw-pill hidden"></span>
             <span id="arch-whisper" class="pill soft hidden"></span>
             <span id="arch-local" class="pill soft hidden"></span>
           </div>
@@ -262,6 +263,7 @@
             <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Télécharger le ZIP</a>
             <a id="arch-all-txt" class="btn-ghost btn-inline-ghost hidden" href="#">Tous les textes</a>
             <button type="button" id="arch-copy-all" class="btn-ghost btn-inline-ghost hidden">Copier toutes les phrases</button>
+            <button type="button" id="arch-only-kw" class="btn-ghost btn-inline-ghost hidden">Voir seulement cheaterbuster</button>
           </p>
         </div>
       </header>
@@ -270,6 +272,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=29"></script>
+  <script src="/static/app.js?v=30"></script>
 </body>
 </html>

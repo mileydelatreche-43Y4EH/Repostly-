@@ -715,7 +715,38 @@
     setStatus("");
   });
 
+  function highlightKeyword(text, keyword = "cheaterbuster") {
+    const raw = String(text || "");
+    if (!raw) return document.createTextNode("Aucun texte extrait.");
+    const frag = document.createDocumentFragment();
+    const re = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+    let last = 0;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      if (m.index > last) {
+        frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      }
+      const mark = document.createElement("mark");
+      mark.className = "kw-hit";
+      mark.textContent = m[0];
+      frag.appendChild(mark);
+      last = m.index + m[0].length;
+    }
+    if (last < raw.length) {
+      frag.appendChild(document.createTextNode(raw.slice(last)));
+    }
+    if (!frag.childNodes.length) {
+      frag.appendChild(document.createTextNode(raw));
+    }
+    return frag;
+  }
+
+  function textHasKeyword(text, keyword = "cheaterbuster") {
+    return new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(String(text || ""));
+  }
+
   function renderArchive(data) {
+    const KEYWORD = "cheaterbuster";
     const p = data.profile || {};
     const handle = data.handle || "";
     const letter = p.nickname || handle;
@@ -741,10 +772,20 @@
       bioEl.classList.add("hidden");
     }
 
+    const items = data.items || [];
+    const kwHits = items.filter(
+      (it) => textHasKeyword(it.transcript, KEYWORD) || textHasKeyword(it.caption, KEYWORD),
+    );
+    // Matches first
+    const ordered = [
+      ...kwHits,
+      ...items.filter((it) => !kwHits.includes(it)),
+    ];
+
     const dl = Number(data.downloaded || 0);
     const tx = Number(data.transcribed || 0);
     const req = Number(data.requested || 0);
-    const found = Number(data.found || data.items?.length || 0);
+    const found = Number(data.found || items.length || 0);
     document.getElementById("arch-count").textContent =
       `${dl} MP4` + (req ? ` / ${req}` : "");
     const foundEl = document.getElementById("arch-found");
@@ -753,12 +794,19 @@
     document.getElementById("arch-tx").textContent =
       `${tx} texte${tx === 1 ? "" : "s"}`;
 
+    const kwEl = document.getElementById("arch-keyword");
+    kwEl.textContent =
+      kwHits.length > 0
+        ? `${kwHits.length}× cheaterbuster`
+        : "0× cheaterbuster";
+    kwEl.classList.remove("hidden");
+
     const w = document.getElementById("arch-whisper");
     if (data.whisper_enabled) {
-      w.textContent = "Whisper ON";
+      w.textContent = "texte paroles ON";
       w.classList.remove("hidden");
     } else {
-      w.textContent = "Whisper OFF";
+      w.textContent = "texte partiel";
       w.classList.remove("hidden");
     }
     const loc = document.getElementById("arch-local");
@@ -797,7 +845,7 @@
     }
 
     const copyBtn = document.getElementById("arch-copy-all");
-    const allPhrases = (data.items || [])
+    const allPhrases = items
       .map((it) => (it.transcript || "").trim())
       .filter(Boolean)
       .join("\n\n———\n\n");
@@ -816,6 +864,26 @@
       };
     } else {
       copyBtn.classList.add("hidden");
+    }
+
+    const onlyKw = document.getElementById("arch-only-kw");
+    let filterOn = false;
+    if (kwHits.length) {
+      onlyKw.classList.remove("hidden");
+      onlyKw.textContent = "Voir seulement cheaterbuster";
+      onlyKw.onclick = () => {
+        filterOn = !filterOn;
+        onlyKw.textContent = filterOn
+          ? "Voir toutes les vidéos"
+          : "Voir seulement cheaterbuster";
+        list.querySelectorAll(".arch-item").forEach((el) => {
+          if (!el.classList.contains("has-keyword")) {
+            el.classList.toggle("kw-hidden", filterOn);
+          }
+        });
+      };
+    } else {
+      onlyKw.classList.add("hidden");
     }
 
     const fmtNum = (n) => {
@@ -842,9 +910,11 @@
 
     const list = document.getElementById("arch-list");
     list.innerHTML = "";
-    (data.items || []).forEach((it, idx) => {
+    ordered.forEach((it, idx) => {
+      const hit =
+        textHasKeyword(it.transcript, KEYWORD) || textHasKeyword(it.caption, KEYWORD);
       const row = document.createElement("article");
-      row.className = "arch-item";
+      row.className = "arch-item" + (hit ? " has-keyword" : "");
 
       const media = document.createElement("div");
       media.className = "arch-media";
@@ -880,13 +950,13 @@
 
       const body = document.createElement("div");
       const title = document.createElement("h3");
-      title.textContent = `Vidéo ${idx + 1}`;
+      title.textContent = hit ? `Vidéo ${idx + 1} — cheaterbuster` : `Vidéo ${idx + 1}`;
       body.appendChild(title);
 
       if (it.caption) {
         const cap = document.createElement("p");
         cap.className = "arch-caption";
-        cap.textContent = it.caption;
+        cap.appendChild(highlightKeyword(it.caption, KEYWORD));
         body.appendChild(cap);
       }
 
@@ -900,8 +970,9 @@
       const meta = document.createElement("div");
       meta.className = "arch-meta";
       const pills = [];
+      if (hit) pills.push("cheaterbuster");
       const src = it.transcript_source || "";
-      if (src === "whisper") pills.push("parole (Whisper)");
+      if (src === "whisper") pills.push("texte paroles");
       else if (src === "tiktok_captions") pills.push("captions TikTok");
       else if (src === "description") pills.push("description");
       else if (src === "cache") pills.push("cache");
@@ -913,7 +984,7 @@
       (it.hashtags || []).slice(0, 6).forEach((h) => pills.push(`#${h}`));
       pills.forEach((t) => {
         const pill = document.createElement("span");
-        pill.className = "pill soft";
+        pill.className = "pill soft" + (t === "cheaterbuster" ? " kw-pill" : "");
         pill.textContent = t;
         meta.appendChild(pill);
       });
@@ -921,12 +992,14 @@
 
       const txLabel = document.createElement("p");
       txLabel.className = "arch-transcript-label";
-      txLabel.textContent = "Texte / phrases";
+      txLabel.textContent = "Texte / phrases (paroles)";
       body.appendChild(txLabel);
 
       const txEl = document.createElement("p");
       txEl.className = "arch-transcript";
-      txEl.textContent = it.transcript || "Aucun texte extrait.";
+      txEl.appendChild(
+        highlightKeyword(it.transcript || "Aucun texte extrait.", KEYWORD),
+      );
       body.appendChild(txEl);
 
       const links = document.createElement("div");
@@ -999,9 +1072,6 @@
         if (String(n) === current) opt.selected = true;
         sel.appendChild(opt);
       });
-      if (cap.whisper === false && transcribeEl) {
-        // laisse coché : le backend utilisera les captions
-      }
     } catch (_) {}
   }
 
