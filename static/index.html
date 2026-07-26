@@ -55,10 +55,10 @@
 
       <section class="panel">
         <div class="mode-switch" role="tablist" aria-label="Objectif">
-          <button type="button" class="mode-btn active" data-mode="reposts" role="tab" aria-selected="true">
+          <button type="button" class="mode-btn" data-mode="reposts" role="tab" aria-selected="false">
             Analyser les reposts
           </button>
-          <button type="button" class="mode-btn" data-mode="archive" role="tab" aria-selected="false">
+          <button type="button" class="mode-btn active" data-mode="archive" role="tab" aria-selected="true">
             Textes / cheaterbuster
           </button>
         </div>
@@ -77,7 +77,7 @@
             />
           </label>
 
-          <div id="opts-reposts" class="row">
+          <div id="opts-reposts" class="row hidden">
             <label class="field field-sm">
               <span class="field-label">Reposts à analyser</span>
               <select id="max">
@@ -92,7 +92,7 @@
             </button>
           </div>
 
-          <div id="opts-archive" class="archive-opts hidden">
+          <div id="opts-archive" class="archive-opts">
             <div class="row">
               <label class="field field-sm">
                 <span class="field-label">Vidéos à récupérer</span>
@@ -271,7 +271,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>
 

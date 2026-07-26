@@ -19,7 +19,7 @@
   const viewResults = document.getElementById("view-results");
   const viewArchive = document.getElementById("view-archive");
 
-  let currentMode = "reposts";
+  let currentMode = "archive";
 
   const scanAvatar = document.getElementById("scan-avatar");
   const scanFallback = document.getElementById("scan-fallback");
