@@ -1130,5 +1130,6 @@
     }
   }
 
+  void loadCapabilities();
   void initRecent();
 })();
