@@ -402,37 +402,28 @@ html.dark .theme-toggle .icon-sun {
   background: var(--avatar-bg);
 }
 
-.arch-dl-overlay {
-  position: absolute;
-  left: 50%;
-  bottom: 1rem;
-  transform: translateX(-50%);
-  z-index: 3;
+.arch-dl-btn {
+  align-self: flex-start;
+  margin-top: 0.35rem;
   border: none;
   border-radius: 999px;
-  padding: 0.7rem 1.35rem;
+  height: 2.5rem;
+  padding: 0 1.25rem;
   font: inherit;
   font-size: 0.88rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: #fff;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg, #1482f0 0%, var(--blue) 100%);
+  box-shadow: 0 6px 16px rgba(0, 113, 227, 0.25);
   cursor: pointer;
   white-space: nowrap;
-  transition: transform 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease, filter 0.15s ease;
 }
 
-.arch-dl-overlay:hover {
-  background: rgba(10, 132, 255, 0.92);
-  transform: translateX(-50%) scale(1.03);
-}
-
-.arch-dl-overlay:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.arch-dl-btn:hover {
+  filter: brightness(1.05);
+  transform: scale(1.02);
 }
 
 .arch-body {

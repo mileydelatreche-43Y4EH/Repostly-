@@ -1000,23 +1000,6 @@
           }
           video.src = fileUrl(it.file);
           phone.appendChild(video);
-
-          const dlBtn = document.createElement("button");
-          dlBtn.type = "button";
-          dlBtn.className = "arch-dl-overlay";
-          dlBtn.textContent = "Download";
-          dlBtn.title = "Telecharger la video (qualite max)";
-          dlBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            const a = document.createElement("a");
-            a.href = fileUrl(it.file);
-            a.download = it.file || `${it.id || "video"}.mp4`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          });
-          phone.appendChild(dlBtn);
         } else if (it.cover) {
           const img = document.createElement("img");
           img.className = "arch-cover";
@@ -1057,6 +1040,24 @@
           highlightKeyword(it.transcript || "Aucun texte extrait.", KEYWORD),
         );
         body.appendChild(txEl);
+
+        if (it.file) {
+          const dlBtn = document.createElement("button");
+          dlBtn.type = "button";
+          dlBtn.className = "arch-dl-btn";
+          dlBtn.textContent = "Download";
+          dlBtn.title = "Telecharger la video (qualite max)";
+          dlBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            const a = document.createElement("a");
+            a.href = fileUrl(it.file);
+            a.download = it.file || `${it.id || "video"}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+          body.appendChild(dlBtn);
+        }
 
         row.appendChild(body);
         list.appendChild(row);
