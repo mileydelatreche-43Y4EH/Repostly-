@@ -733,29 +733,112 @@
     hEl.textContent = `@${handle}`;
     hEl.href = `https://www.tiktok.com/@${handle}`;
 
+    const bioEl = document.getElementById("arch-bio");
+    if (p.bio) {
+      bioEl.textContent = p.bio;
+      bioEl.classList.remove("hidden");
+    } else {
+      bioEl.classList.add("hidden");
+    }
+
     const dl = Number(data.downloaded || 0);
     const tx = Number(data.transcribed || 0);
     const req = Number(data.requested || 0);
+    const found = Number(data.found || data.items?.length || 0);
     document.getElementById("arch-count").textContent =
-      `${dl} vidéo${dl === 1 ? "" : "s"} téléchargée${dl === 1 ? "" : "s"}` +
-      (req ? ` / ${req}` : "");
+      `${dl} MP4` + (req ? ` / ${req}` : "");
+    const foundEl = document.getElementById("arch-found");
+    foundEl.textContent = `${found} trouvé${found === 1 ? "" : "s"}`;
+    foundEl.classList.remove("hidden");
     document.getElementById("arch-tx").textContent =
-      `${tx} transcript${tx === 1 ? "" : "s"}`;
+      `${tx} texte${tx === 1 ? "" : "s"}`;
+
     const w = document.getElementById("arch-whisper");
     if (data.whisper_enabled) {
       w.textContent = "Whisper ON";
       w.classList.remove("hidden");
     } else {
-      w.classList.add("hidden");
+      w.textContent = "Whisper OFF";
+      w.classList.remove("hidden");
     }
+    const loc = document.getElementById("arch-local");
+    if (data.local_mode) {
+      loc.textContent = "local";
+      loc.classList.remove("hidden");
+    } else {
+      loc.classList.add("hidden");
+    }
+
+    const folder = document.getElementById("arch-folder");
+    if (data.out_dir) {
+      folder.textContent = `Dossier : ${data.out_dir}`;
+      folder.classList.remove("hidden");
+    } else {
+      folder.classList.add("hidden");
+    }
+
+    const fileUrl = (name) =>
+      `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(name)}`;
 
     const zip = document.getElementById("arch-zip");
     if (data.zip) {
-      zip.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(data.zip)}`;
+      zip.href = fileUrl(data.zip);
       zip.classList.remove("hidden");
     } else {
       zip.classList.add("hidden");
     }
+
+    const allTxt = document.getElementById("arch-all-txt");
+    if (data.all_transcripts) {
+      allTxt.href = fileUrl(data.all_transcripts);
+      allTxt.classList.remove("hidden");
+    } else {
+      allTxt.classList.add("hidden");
+    }
+
+    const copyBtn = document.getElementById("arch-copy-all");
+    const allPhrases = (data.items || [])
+      .map((it) => (it.transcript || "").trim())
+      .filter(Boolean)
+      .join("\n\n———\n\n");
+    if (allPhrases) {
+      copyBtn.classList.remove("hidden");
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(allPhrases);
+          copyBtn.textContent = "Copié ✓";
+          setTimeout(() => {
+            copyBtn.textContent = "Copier toutes les phrases";
+          }, 1600);
+        } catch (_) {
+          copyBtn.textContent = "Copie impossible";
+        }
+      };
+    } else {
+      copyBtn.classList.add("hidden");
+    }
+
+    const fmtNum = (n) => {
+      const v = Number(n) || 0;
+      if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+      if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+      return String(v);
+    };
+    const fmtSize = (b) => {
+      const n = Number(b) || 0;
+      if (n < 1024) return `${n} o`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} Ko`;
+      return `${(n / (1024 * 1024)).toFixed(1)} Mo`;
+    };
+    const fmtDate = (ts) => {
+      const t = Number(ts) || 0;
+      if (!t) return "";
+      try {
+        return new Date(t * 1000).toLocaleDateString("fr-FR");
+      } catch {
+        return "";
+      }
+    };
 
     const list = document.getElementById("arch-list");
     list.innerHTML = "";
@@ -763,7 +846,17 @@
       const row = document.createElement("article");
       row.className = "arch-item";
 
-      if (it.cover) {
+      const media = document.createElement("div");
+      media.className = "arch-media";
+      if (it.file) {
+        const video = document.createElement("video");
+        video.className = "arch-video";
+        video.controls = true;
+        video.preload = "metadata";
+        video.playsInline = true;
+        video.src = fileUrl(it.file);
+        media.appendChild(video);
+      } else if (it.cover) {
         const img = document.createElement("img");
         img.className = "arch-cover";
         img.alt = "";
@@ -776,40 +869,60 @@
           ph.textContent = `#${idx + 1}`;
           img.replaceWith(ph);
         };
-        row.appendChild(img);
+        media.appendChild(img);
       } else {
         const ph = document.createElement("div");
         ph.className = "arch-cover placeholder";
         ph.textContent = `#${idx + 1}`;
-        row.appendChild(ph);
+        media.appendChild(ph);
       }
+      row.appendChild(media);
 
       const body = document.createElement("div");
       const title = document.createElement("h3");
-      title.textContent = (it.caption || `Vidéo ${idx + 1}`).slice(0, 90);
+      title.textContent = `Vidéo ${idx + 1}`;
       body.appendChild(title);
+
+      if (it.caption) {
+        const cap = document.createElement("p");
+        cap.className = "arch-caption";
+        cap.textContent = it.caption;
+        body.appendChild(cap);
+      }
+
+      if (it.music) {
+        const m = document.createElement("p");
+        m.className = "arch-music";
+        m.textContent = `♪ ${it.music}`;
+        body.appendChild(m);
+      }
 
       const meta = document.createElement("div");
       meta.className = "arch-meta";
+      const pills = [];
       const src = it.transcript_source || "";
-      if (src) {
+      if (src === "whisper") pills.push("parole (Whisper)");
+      else if (src === "tiktok_captions") pills.push("captions TikTok");
+      else if (src === "description") pills.push("description");
+      else if (src === "cache") pills.push("cache");
+      if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
+      if (it.likes) pills.push(`${fmtNum(it.likes)} likes`);
+      if (it.plays) pills.push(`${fmtNum(it.plays)} vues`);
+      const d = fmtDate(it.create_time);
+      if (d) pills.push(d);
+      (it.hashtags || []).slice(0, 6).forEach((h) => pills.push(`#${h}`));
+      pills.forEach((t) => {
         const pill = document.createElement("span");
         pill.className = "pill soft";
-        pill.textContent =
-          src === "whisper"
-            ? "parole (Whisper)"
-            : src === "tiktok_captions"
-              ? "captions TikTok"
-              : "description";
+        pill.textContent = t;
         meta.appendChild(pill);
-      }
-      if (it.file) {
-        const ok = document.createElement("span");
-        ok.className = "pill soft";
-        ok.textContent = "MP4 OK";
-        meta.appendChild(ok);
-      }
+      });
       body.appendChild(meta);
+
+      const txLabel = document.createElement("p");
+      txLabel.className = "arch-transcript-label";
+      txLabel.textContent = "Texte / phrases";
+      body.appendChild(txLabel);
 
       const txEl = document.createElement("p");
       txEl.className = "arch-transcript";
@@ -820,24 +933,37 @@
       links.className = "arch-links";
       if (it.file) {
         const a = document.createElement("a");
-        a.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(it.file)}`;
+        a.href = fileUrl(it.file);
         a.textContent = "Télécharger MP4";
         a.download = it.file;
         links.appendChild(a);
       }
       if (it.transcript) {
         const a = document.createElement("a");
-        a.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(it.id + ".txt")}`;
-        a.textContent = "Fichier texte";
+        a.href = fileUrl(`${it.id}.txt`);
+        a.textContent = "Fichier .txt";
         a.download = `${it.id}.txt`;
         links.appendChild(a);
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.textContent = "Copier le texte";
+        copy.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(it.transcript);
+            copy.textContent = "Copié ✓";
+            setTimeout(() => {
+              copy.textContent = "Copier le texte";
+            }, 1200);
+          } catch (_) {}
+        });
+        links.appendChild(copy);
       }
       if (it.url) {
         const a = document.createElement("a");
         a.href = it.url;
         a.target = "_blank";
         a.rel = "noopener noreferrer";
-        a.textContent = "Voir sur TikTok";
+        a.textContent = "Ouvrir sur TikTok";
         links.appendChild(a);
       }
       body.appendChild(links);
@@ -855,6 +981,28 @@
 
     showView("archive");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function loadCapabilities() {
+    try {
+      const res = await fetch("/api/capabilities");
+      if (!res.ok) return;
+      const cap = await res.json();
+      const sel = maxVideosEl;
+      const limits = cap.archive_limits || [10, 20, 50, 100, 250, 500];
+      const current = String(cap.default_archive || 100);
+      sel.innerHTML = "";
+      limits.forEach((n) => {
+        const opt = document.createElement("option");
+        opt.value = String(n);
+        opt.textContent = String(n);
+        if (String(n) === current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (cap.whisper === false && transcribeEl) {
+        // laisse coché : le backend utilisera les captions
+      }
+    } catch (_) {}
   }
 
   async function readSse(res, onEvent) {

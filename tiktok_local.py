@@ -1138,17 +1138,18 @@ def fetch_reposts(
 def fetch_user_posts(
     profile_url: str,
     *,
-    max_items: int = 20,
+    max_items: int = 100,
     headless: bool = True,
     on_profile=None,
     on_progress=None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Collecte uniquement les vidéos postées par le compte (onglet Videos)."""
     handle = extract_handle(profile_url)
-    if max_items not in (10, 20, 50, 100):
-        max_items = 20
+    allowed = (10, 20, 50, 100, 250, 500)
+    if max_items not in allowed:
+        max_items = 100
 
-    light = os.getenv("SCRAPE_LIGHT", "1").strip() not in ("0", "false", "False")
+    light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
     if light and max_items > 20:
         max_items = 20
 

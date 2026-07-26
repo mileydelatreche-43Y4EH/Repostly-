@@ -6,6 +6,7 @@ import json
 import os
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,9 +15,14 @@ from tiktok_local import extract_handle, fetch_user_posts
 ROOT = Path(__file__).resolve().parent
 ARCHIVES = ROOT / "data" / "archives"
 
-
 ProgressCb = Callable[[str], None]
 ProfileCb = Callable[[dict], None]
+
+ALLOWED_MAX = (10, 20, 50, 100, 250, 500)
+
+
+def _is_light() -> bool:
+    return os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
 
 
 def _safe_handle(handle: str) -> str:
@@ -37,49 +43,6 @@ def _progress(cb: ProgressCb | None, msg: str) -> None:
             pass
 
 
-def _extract_tiktok_captions(raw: dict[str, Any]) -> str:
-    """Sous-titres auto TikTok si présents (gratuit)."""
-    chunks: list[str] = []
-
-    def walk(obj: Any, depth: int = 0) -> None:
-        if depth > 8 or obj is None:
-            return
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                kl = str(k).lower()
-                if kl in ("text", "utterance", "content", "subtitle") and isinstance(v, str):
-                    t = v.strip()
-                    if 2 < len(t) < 500 and not t.startswith("http"):
-                        chunks.append(t)
-                elif kl in ("captioninfos", "captions", "cla", "subtitleinfos"):
-                    walk(v, depth + 1)
-                else:
-                    walk(v, depth + 1)
-        elif isinstance(obj, list):
-            for x in obj[:80]:
-                walk(x, depth + 1)
-
-    # Chemins fréquents TikTok
-    video = raw.get("video") if isinstance(raw.get("video"), dict) else {}
-    for key in ("cla", "subtitleInfos", "subtitle_infos", "captionInfos"):
-        if key in video:
-            walk(video.get(key))
-        if key in raw:
-            walk(raw.get(key))
-    walk(raw.get("stickersOnItem"))
-
-    # Déduplique en gardant l'ordre
-    seen: set[str] = set()
-    out: list[str] = []
-    for c in chunks:
-        key = c.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(c)
-    return "\n".join(out).strip()
-
-
 def _download_one(url: str, out_path: Path) -> Path | None:
     """Télécharge une vidéo TikTok en meilleure qualité via yt-dlp."""
     try:
@@ -88,7 +51,6 @@ def _download_one(url: str, out_path: Path) -> Path | None:
         raise RuntimeError("yt-dlp manquant — pip install yt-dlp") from e
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Sans extension : yt-dlp ajoute .mp4
     tmpl = str(out_path.with_suffix("")) + ".%(ext)s"
     opts = {
         "format": "bv*+ba/b",
@@ -97,8 +59,10 @@ def _download_one(url: str, out_path: Path) -> Path | None:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
-        "retries": 3,
-        "socket_timeout": 30,
+        "retries": 4,
+        "fragment_retries": 4,
+        "socket_timeout": 45,
+        "concurrent_fragment_downloads": 3,
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -111,11 +75,14 @@ def _download_one(url: str, out_path: Path) -> Path | None:
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
 
-    # Trouver le fichier produit
     candidates = list(out_path.parent.glob(out_path.stem + ".*"))
-    candidates = [p for p in candidates if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov")]
+    candidates = [
+        p
+        for p in candidates
+        if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov")
+        and p.stat().st_size > 5_000
+    ]
     if candidates:
-        # Renommer en .mp4 si possible
         best = max(candidates, key=lambda p: p.stat().st_size)
         if best.suffix.lower() != ".mp4":
             target = out_path.with_suffix(".mp4")
@@ -140,7 +107,6 @@ def _whisper_transcribe(video_path: Path) -> str:
         raise RuntimeError("openai manquant — pip install openai") from e
 
     client = OpenAI(api_key=api_key)
-    # Whisper accepte mp4 ; limite ~25 Mo — compresser audio si trop gros
     path = video_path
     size_mb = path.stat().st_size / (1024 * 1024)
     audio_tmp: Path | None = None
@@ -171,7 +137,6 @@ def _whisper_transcribe(video_path: Path) -> str:
             result = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
-                # Auto-detect langue (souvent FR)
                 response_format="text",
             )
         text = result if isinstance(result, str) else getattr(result, "text", "") or str(result)
@@ -187,7 +152,7 @@ def _whisper_transcribe(video_path: Path) -> str:
 def run_archive(
     profile: str,
     *,
-    max_videos: int = 20,
+    max_videos: int = 100,
     transcribe: bool = True,
     headless: bool = True,
     on_profile: ProfileCb | None = None,
@@ -195,14 +160,14 @@ def run_archive(
 ) -> dict[str, Any]:
     """
     1) Liste les posts du compte
-    2) Télécharge chaque vidéo (meilleure qualité dispo)
-    3) Extrait le texte (captions TikTok gratuits, sinon Whisper ~0,006 $/min)
+    2) Télécharge chaque vidéo (meilleure qualité)
+    3) Transcription (Whisper si clé, sinon captions TikTok)
     """
     handle = extract_handle(profile)
-    light = os.getenv("SCRAPE_LIGHT", "1").strip() not in ("0", "false", "False")
-    allowed = {10, 20, 50, 100}
-    if max_videos not in allowed:
-        max_videos = 20
+    light = _is_light()
+    if max_videos not in ALLOWED_MAX:
+        max_videos = 100
+    # Render Free seulement
     if light and max_videos > 20:
         max_videos = 20
 
@@ -216,42 +181,79 @@ def run_archive(
     )
 
     out_dir = archive_dir(handle)
-    items_out: list[dict[str, Any]] = []
     whisper_ok = bool(os.getenv("OPENAI_API_KEY", "").strip())
     if transcribe and not whisper_ok:
         _progress(
             on_progress,
-            "Pas de OPENAI_API_KEY — captions TikTok seulement (Whisper désactivé).",
+            "Pas de OPENAI_API_KEY — captions TikTok / description seulement.",
         )
 
     total = len(posts)
-    for i, post in enumerate(posts, start=1):
-        vid = str(post.get("id") or f"idx{i}")
+    # Phase download (parallèle léger en local)
+    workers = 1 if light else min(3, max(1, total))
+    download_map: dict[str, tuple[Path | None, str]] = {}
+
+    def _job(post: dict[str, Any], idx: int) -> tuple[str, Path | None, str]:
+        vid = str(post.get("id") or f"idx{idx}")
         url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
-        caption = (post.get("caption") or "").strip()
-        _progress(on_progress, f"Téléchargement {i}/{total}…")
-
         video_path = out_dir / f"{vid}.mp4"
-        transcript_path = out_dir / f"{vid}.txt"
-        meta_path = out_dir / f"{vid}.json"
-
-        downloaded: Path | None = None
         err = ""
+        downloaded: Path | None = None
         try:
             if video_path.exists() and video_path.stat().st_size > 10_000:
                 downloaded = video_path
             else:
                 downloaded = _download_one(url, video_path)
+                if not downloaded:
+                    err = "téléchargement vide"
         except Exception as e:
             err = str(e)
             downloaded = None
+        return vid, downloaded, err
+
+    _progress(on_progress, f"Téléchargement de {total} vidéos…")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_job, post, i): (i, post)
+            for i, post in enumerate(posts, start=1)
+        }
+        done_n = 0
+        for fut in as_completed(futures):
+            i, post = futures[fut]
+            vid, downloaded, err = fut.result()
+            download_map[vid] = (downloaded, err)
+            done_n += 1
+            _progress(on_progress, f"Téléchargement {done_n}/{total}…")
+
+    items_out: list[dict[str, Any]] = []
+    for i, post in enumerate(posts, start=1):
+        vid = str(post.get("id") or f"idx{i}")
+        url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
+        caption = (post.get("caption") or "").strip()
+        downloaded, err = download_map.get(vid, (None, "manquant"))
+        transcript_path = out_dir / f"{vid}.txt"
+        meta_path = out_dir / f"{vid}.json"
 
         transcript = ""
         source = ""
         free_caps = (post.get("spoken_hints") or "").strip()
+        prev_source = ""
+        if meta_path.exists():
+            try:
+                prev = json.loads(meta_path.read_text(encoding="utf-8"))
+                prev_source = str(prev.get("transcript_source") or "")
+            except Exception:
+                prev_source = ""
 
-        # Whisper = parole réelle (idéal). Sinon captions TikTok gratuites, sinon description.
-        if transcribe and whisper_ok and downloaded:
+        # Cache : reprend Whisper déjà fait ; sinon captions/fichier texte
+        if transcript_path.exists() and transcript_path.stat().st_size > 2:
+            cached = transcript_path.read_text(encoding="utf-8").strip()
+            if cached:
+                if prev_source == "whisper" or not (transcribe and whisper_ok):
+                    transcript = cached
+                    source = prev_source or "cache"
+
+        if transcribe and whisper_ok and downloaded and not transcript:
             try:
                 _progress(on_progress, f"Transcription IA {i}/{total}…")
                 transcript = _whisper_transcribe(downloaded)
@@ -271,17 +273,20 @@ def run_archive(
             transcript_path.write_text(transcript, encoding="utf-8")
 
         file_name = downloaded.name if downloaded else ""
+        size_bytes = downloaded.stat().st_size if downloaded and downloaded.exists() else 0
         meta = {
             "id": vid,
             "url": url,
             "caption": caption,
             "author": post.get("author") or handle,
             "music": post.get("music") or "",
+            "hashtags": post.get("hashtags") or [],
             "cover": post.get("cover") or "",
             "plays": post.get("plays") or 0,
             "likes": post.get("likes") or 0,
             "create_time": post.get("create_time") or 0,
             "file": file_name,
+            "file_size": size_bytes,
             "transcript": transcript,
             "transcript_source": source,
             "error": err,
@@ -289,26 +294,39 @@ def run_archive(
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         items_out.append(meta)
 
-    # Manifest
+    all_text = "\n\n———\n\n".join(
+        f"[{i}] {it.get('caption') or it.get('id')}\n{it.get('transcript') or ''}".strip()
+        for i, it in enumerate(items_out, start=1)
+        if it.get("transcript")
+    )
+    if all_text:
+        (out_dir / "all_transcripts.txt").write_text(all_text, encoding="utf-8")
+
     manifest = {
         "handle": handle,
         "profile": profile_data,
         "requested": max_videos,
+        "found": total,
         "downloaded": sum(1 for x in items_out if x.get("file")),
         "transcribed": sum(1 for x in items_out if x.get("transcript")),
         "whisper_enabled": whisper_ok and transcribe,
+        "local_mode": not light,
+        "out_dir": str(out_dir),
         "items": items_out,
+        "all_transcripts": "all_transcripts.txt" if all_text else "",
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    # ZIP des mp4 + txt
+    _progress(on_progress, "Création du ZIP…")
     zip_path = out_dir / f"{_safe_handle(handle)}_archive.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for p in out_dir.iterdir():
-            if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv") and p.name != zip_path.name:
+            if p.name == zip_path.name:
+                continue
+            if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv"):
                 zf.write(p, arcname=p.name)
 
     manifest["zip"] = zip_path.name
@@ -322,7 +340,6 @@ def run_archive(
 
 def get_archive_file(handle: str, filename: str) -> Path | None:
     safe = _safe_handle(extract_handle(handle) if "@" in handle or "/" in handle else handle)
-    # filename only — pas de path traversal
     name = Path(filename).name
     if not name or name in (".", ".."):
         return None

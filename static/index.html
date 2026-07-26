@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=28" />
+  <link rel="stylesheet" href="/static/style.css?v=29" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="Thème">
@@ -99,9 +99,11 @@
                 <span class="field-label">Vidéos à récupérer</span>
                 <select id="max-videos">
                   <option value="10">10</option>
-                  <option value="20" selected>20</option>
+                  <option value="20">20</option>
                   <option value="50">50</option>
-                  <option value="100">100</option>
+                  <option value="100" selected>100</option>
+                  <option value="250">250</option>
+                  <option value="500">500</option>
                 </select>
               </label>
               <button type="submit" id="go-archive" class="btn-primary">
@@ -110,10 +112,10 @@
             </div>
             <label class="check-row">
               <input type="checkbox" id="transcribe" checked />
-              <span>Transcrire la parole (Whisper ≈ 0,006&nbsp;$/min — clé OPENAI_API_KEY)</span>
+              <span>Transcrire la parole (Whisper ≈ 0,006&nbsp;$/min — OPENAI_API_KEY dans .env)</span>
             </label>
             <p class="hint">
-              Sur Render Free : max 20 vidéos. En local tu peux monter à 50–100.
+              Mode local : qualité max, jusqu’à 500 vidéos, fichiers dans <code>data/archives/</code>.
             </p>
           </div>
         </form>
@@ -247,13 +249,19 @@
         <div class="result-hero-text">
           <h1 id="arch-nick" class="res-nick">—</h1>
           <a id="arch-handle" class="res-handle" href="#" target="_blank" rel="noopener noreferrer">@</a>
+          <p id="arch-bio" class="res-bio hidden"></p>
           <div class="meta-row">
             <span id="arch-count" class="pill soft"></span>
+            <span id="arch-found" class="pill soft hidden"></span>
             <span id="arch-tx" class="pill soft"></span>
             <span id="arch-whisper" class="pill soft hidden"></span>
+            <span id="arch-local" class="pill soft hidden"></span>
           </div>
+          <p id="arch-folder" class="arch-folder hidden"></p>
           <p class="arch-actions">
             <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Télécharger le ZIP</a>
+            <a id="arch-all-txt" class="btn-ghost btn-inline-ghost hidden" href="#">Tous les textes</a>
+            <button type="button" id="arch-copy-all" class="btn-ghost btn-inline-ghost hidden">Copier toutes les phrases</button>
           </p>
         </div>
       </header>
@@ -262,6 +270,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=28"></script>
+  <script src="/static/app.js?v=29"></script>
 </body>
 </html>

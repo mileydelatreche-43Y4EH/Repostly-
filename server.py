@@ -43,7 +43,7 @@ class AnalyzeRequest(BaseModel):
 
 class ArchiveRequest(BaseModel):
     profile: str = Field(..., min_length=2, max_length=300)
-    max_videos: int = Field(20, ge=10, le=100)
+    max_videos: int = Field(100, ge=10, le=500)
     transcribe: bool = True
 
 
@@ -87,7 +87,25 @@ async def index():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "service": "repostly"}
+    light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
+    return {
+        "ok": True,
+        "service": "repostly",
+        "local_mode": not light,
+        "whisper": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        "archive_max": 20 if light else 500,
+    }
+
+
+@app.get("/api/capabilities")
+async def capabilities():
+    light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
+    return {
+        "local_mode": not light,
+        "whisper": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        "archive_limits": [10, 20] if light else [10, 20, 50, 100, 250, 500],
+        "default_archive": 20 if light else 100,
+    }
 
 
 @app.get("/api/avatar")
@@ -283,8 +301,11 @@ async def api_analyze(req: AnalyzeRequest):
 @app.post("/api/archive")
 async def api_archive(req: ArchiveRequest):
     """Télécharge les vidéos postées + transcription (SSE)."""
-    allowed = {10, 20, 50, 100}
-    max_videos = req.max_videos if req.max_videos in allowed else 20
+    allowed = {10, 20, 50, 100, 250, 500}
+    max_videos = req.max_videos if req.max_videos in allowed else 100
+    light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
+    if light and max_videos > 20:
+        max_videos = 20
     headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
     handle = extract_handle(req.profile)
     log.info(
@@ -359,13 +380,17 @@ async def api_archive(req: ArchiveRequest):
                     "id": it.get("id"),
                     "url": it.get("url"),
                     "caption": it.get("caption"),
+                    "music": it.get("music"),
+                    "hashtags": it.get("hashtags") or [],
                     "cover": it.get("cover"),
                     "file": it.get("file"),
+                    "file_size": it.get("file_size") or 0,
                     "transcript": it.get("transcript"),
                     "transcript_source": it.get("transcript_source"),
                     "error": it.get("error"),
                     "plays": it.get("plays"),
                     "likes": it.get("likes"),
+                    "create_time": it.get("create_time"),
                 }
             )
         payload = {
@@ -373,10 +398,14 @@ async def api_archive(req: ArchiveRequest):
             "handle": manifest.get("handle"),
             "profile": manifest.get("profile") or {},
             "requested": manifest.get("requested"),
+            "found": manifest.get("found"),
             "downloaded": manifest.get("downloaded"),
             "transcribed": manifest.get("transcribed"),
             "whisper_enabled": manifest.get("whisper_enabled"),
+            "local_mode": manifest.get("local_mode"),
+            "out_dir": manifest.get("out_dir"),
             "zip": manifest.get("zip"),
+            "all_transcripts": manifest.get("all_transcripts"),
             "items": light_items,
         }
         yield _sse({"type": "result", "data": payload})
