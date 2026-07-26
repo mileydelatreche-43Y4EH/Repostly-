@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=30" />
+  <link rel="stylesheet" href="/static/style.css?v=31" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="Thème">
@@ -107,16 +107,13 @@
                 </select>
               </label>
               <button type="submit" id="go-archive" class="btn-primary">
-                <span class="btn-label">Télécharger &amp; transcrire</span>
+                <span class="btn-label">Extraire les textes</span>
               </button>
             </div>
             <label class="check-row">
               <input type="checkbox" id="transcribe" checked />
-              <span>Extraire le texte des paroles (pas de voix) — mot-clé <strong>cheaterbuster</strong> en rouge</span>
+              <span>Extraire le texte des paroles</span>
             </label>
-            <p class="hint">
-              Local : jusqu’à 500 vidéos → <code>data/archives/</code>. On affiche le texte pour repérer « cheaterbuster ».
-            </p>
           </div>
         </form>
         <p id="status" class="status" aria-live="polite"></p>
@@ -272,6 +269,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=30"></script>
+  <script src="/static/app.js?v=31"></script>
 </body>
 </html>
