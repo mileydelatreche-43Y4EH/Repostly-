@@ -350,6 +350,10 @@ def _download_one(url: str, out_path: Path) -> tuple[Path | None, str]:
         for p in candidates
         if p.suffix.lower() in (".mp4", ".webm", ".mkv", ".mov")
         and p.stat().st_size > 5_000
+        and ".corrupt" not in p.name.lower()
+        and ".browser" not in p.name.lower()
+        and ".h264." not in p.name.lower()
+        and ".hevc.bak" not in p.name.lower()
     ]
     downloaded: Path | None = None
     if candidates:
