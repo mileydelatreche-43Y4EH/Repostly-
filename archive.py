@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -23,7 +24,7 @@ ProfileCb = Callable[[dict], None]
 ALLOWED_MAX = (0, 10, 20, 50, 100, 250, 500, 1000, 2000)
 KEYWORD = "cheaterbuster"
 
-# Priorité H.264 (avc1) — HEVC/AV1 = écran noir dans Chrome sans codec système
+# Priorité H.264 (avc1) — HEVC/AV1 = écran noir / image figée dans Chrome
 YTDLP_FORMAT = (
     "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/"
     "bv*[vcodec^=avc1]+ba/"
@@ -31,6 +32,9 @@ YTDLP_FORMAT = (
     "bv*[ext=mp4]+ba/"
     "b"
 )
+
+_CONVERT_LOCKS: dict[str, threading.Lock] = {}
+_CONVERT_LOCKS_GUARD = threading.Lock()
 
 
 def _is_light() -> bool:
@@ -81,53 +85,59 @@ def _ffprobe_vcodec(path: Path) -> str:
 
 
 def ensure_browser_mp4(path: Path) -> Path:
-    """Ré-encode en H.264/AAC si besoin (sinon écran noir dans Chrome)."""
+    """Ré-encode en H.264/AAC si besoin (sinon image figée / écran noir dans Chrome)."""
     if not path or not path.is_file() or path.suffix.lower() != ".mp4":
         return path
     if ".h264.tmp" in path.name:
         return path
-    codec = _ffprobe_vcodec(path)
-    if codec in ("h264", "avc1", "avc"):
-        return path
-    if not codec:
-        return path
 
-    tmp = path.with_suffix(".h264.tmp.mp4")
-    try:
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(path),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-movflags",
-                "+faststart",
-                "-pix_fmt",
-                "yuv420p",
-                str(tmp),
-            ],
-            capture_output=True,
-            timeout=900,
-            check=True,
-        )
-        if tmp.is_file() and tmp.stat().st_size > 5_000:
-            tmp.replace(path)
-    except Exception:
+    key = str(path.resolve())
+    with _CONVERT_LOCKS_GUARD:
+        lock = _CONVERT_LOCKS.setdefault(key, threading.Lock())
+
+    with lock:
+        codec = _ffprobe_vcodec(path)
+        if codec in ("h264", "avc1", "avc"):
+            return path
+        if not codec:
+            return path
+
+        tmp = path.with_suffix(".h264.tmp.mp4")
         try:
-            tmp.unlink(missing_ok=True)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(path),
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(tmp),
+                ],
+                capture_output=True,
+                timeout=900,
+                check=True,
+            )
+            if tmp.is_file() and tmp.stat().st_size > 5_000:
+                tmp.replace(path)
         except Exception:
-            pass
-    return path
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return path
 
 
 def _hashtags(text: str) -> list[str]:

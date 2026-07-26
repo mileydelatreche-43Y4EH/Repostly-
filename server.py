@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from analyze import analyze_profile
-from archive import get_archive_file, run_archive
+from archive import ensure_browser_mp4, get_archive_file, run_archive
 from tiktok_local import extract_handle, fetch_profile_content, fetch_profile_quick
 
 
@@ -446,8 +446,10 @@ async def api_archive_file(handle: str, filename: str):
     media = "application/octet-stream"
     disposition = "attachment"
     if filename.endswith(".mp4"):
+        # Convertit HEVC → H.264 à la volée (sinon image figée dans Chrome)
+        path = await asyncio.to_thread(ensure_browser_mp4, path)
         media = "video/mp4"
-        disposition = "inline"  # indispensable pour <video>
+        disposition = "inline"
     elif filename.endswith(".txt"):
         media = "text/plain; charset=utf-8"
     elif filename.endswith(".zip"):

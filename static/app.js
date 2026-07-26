@@ -977,15 +977,12 @@
           const video = document.createElement("video");
           video.className = "arch-video";
           video.controls = true;
-          video.preload = "metadata";
+          video.preload = "auto";
           video.playsInline = true;
           video.setAttribute("playsinline", "");
-          if (it.cover) {
-            video.poster = it.cover.startsWith("http")
-              ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
-              : it.cover;
-          }
-          video.src = fileUrl(it.file);
+          video.setAttribute("controlslist", "nodownload");
+          // Pas de poster : sinon ça ressemble à une image figée
+          video.src = fileUrl(it.file) + `?v=${encodeURIComponent(it.id || it.file)}`;
           phone.appendChild(video);
         } else if (it.cover) {
           const img = document.createElement("img");
