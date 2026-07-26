@@ -1,4 +1,4 @@
-"""Télécharge les vidéos postées par un compte TikTok + transcription texte."""
+"""Télécharge les vidéos postées par un compte TikTok + textes (captions)."""
 
 from __future__ import annotations
 
@@ -115,7 +115,6 @@ def list_posts_ytdlp(
                 "plays": int(e.get("view_count") or 0),
                 "likes": int(e.get("like_count") or 0),
                 "create_time": int(e.get("timestamp") or 0),
-                "spoken_hints": "",
             }
         )
 
@@ -185,71 +184,18 @@ def _download_one(url: str, out_path: Path) -> Path | None:
     return None
 
 
-def _whisper_transcribe(video_path: Path) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return ""
-    try:
-        from openai import OpenAI
-    except ImportError as e:
-        raise RuntimeError("openai manquant — pip install openai") from e
-
-    client = OpenAI(api_key=api_key)
-    path = video_path
-    size_mb = path.stat().st_size / (1024 * 1024)
-    audio_tmp: Path | None = None
-    if size_mb > 24:
-        audio_tmp = path.with_suffix(".whisper.mp3")
-        import subprocess
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(path),
-                "-vn",
-                "-acodec",
-                "libmp3lame",
-                "-q:a",
-                "5",
-                str(audio_tmp),
-            ],
-            check=True,
-            capture_output=True,
-        )
-        path = audio_tmp
-
-    try:
-        with path.open("rb") as f:
-            result = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="text",
-            )
-        text = result if isinstance(result, str) else getattr(result, "text", "") or str(result)
-        return str(text).strip()
-    finally:
-        if audio_tmp and audio_tmp.exists():
-            try:
-                audio_tmp.unlink()
-            except Exception:
-                pass
-
-
 def run_archive(
     profile: str,
     *,
     max_videos: int = 100,
-    transcribe: bool = True,
     headless: bool = True,
     on_profile: ProfileCb | None = None,
     on_progress: ProgressCb | None = None,
 ) -> dict[str, Any]:
     """
-    1) Liste les posts (yt-dlp d'abord — Playwright souvent bloqué)
-    2) Télécharge chaque vidéo
-    3) Texte paroles (Whisper) ou caption
+    1) Liste les posts (yt-dlp)
+    2) Télécharge les MP4
+    3) Texte = caption / description (pas de transcription orale)
     """
     handle = extract_handle(profile)
     light = _is_light()
@@ -265,7 +211,7 @@ def run_archive(
 
     try:
         posts, profile_data = list_posts_ytdlp(handle, max_items=max_videos)
-        _progress(on_progress, f"{len(posts)} vidéos listées (yt-dlp)…")
+        _progress(on_progress, f"{len(posts)} vidéos listées…")
     except Exception as e:
         list_err = str(e)
         _progress(on_progress, f"yt-dlp échoué — fallback navigateur… ({e})")
@@ -299,13 +245,6 @@ def run_archive(
         )
 
     out_dir = archive_dir(handle)
-    whisper_ok = bool(os.getenv("OPENAI_API_KEY", "").strip())
-    if transcribe and not whisper_ok:
-        _progress(
-            on_progress,
-            "Pas de OPENAI_API_KEY — textes = captions / descriptions.",
-        )
-
     total = len(posts)
     workers = 1 if light else min(3, max(1, total))
     download_map: dict[str, tuple[Path | None, str]] = {}
@@ -351,39 +290,9 @@ def run_archive(
         transcript_path = out_dir / f"{vid}.txt"
         meta_path = out_dir / f"{vid}.json"
 
-        transcript = ""
-        source = ""
-        free_caps = (post.get("spoken_hints") or "").strip()
-        prev_source = ""
-        if meta_path.exists():
-            try:
-                prev = json.loads(meta_path.read_text(encoding="utf-8"))
-                prev_source = str(prev.get("transcript_source") or "")
-            except Exception:
-                prev_source = ""
-
-        if transcript_path.exists() and transcript_path.stat().st_size > 2:
-            cached = transcript_path.read_text(encoding="utf-8").strip()
-            if cached:
-                if prev_source == "whisper" or not (transcribe and whisper_ok):
-                    transcript = cached
-                    source = prev_source or "cache"
-
-        if transcribe and whisper_ok and downloaded and not transcript:
-            try:
-                _progress(on_progress, f"Texte paroles {i}/{total}…")
-                transcript = _whisper_transcribe(downloaded)
-                source = "whisper" if transcript else ""
-            except Exception as e:
-                if not err:
-                    err = f"whisper: {e}"
-
-        if not transcript and free_caps:
-            transcript = free_caps
-            source = "tiktok_captions"
-        if not transcript and caption:
-            transcript = caption
-            source = source or "description"
+        # Texte affiché = caption / description TikTok uniquement
+        transcript = caption
+        source = "description" if caption else ""
 
         if transcript:
             transcript_path.write_text(transcript, encoding="utf-8")
@@ -425,7 +334,6 @@ def run_archive(
         "found": total,
         "downloaded": sum(1 for x in items_out if x.get("file")),
         "transcribed": sum(1 for x in items_out if x.get("transcript")),
-        "whisper_enabled": whisper_ok and transcribe,
         "local_mode": not light,
         "out_dir": str(out_dir),
         "items": items_out,

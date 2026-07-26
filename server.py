@@ -44,7 +44,6 @@ class AnalyzeRequest(BaseModel):
 class ArchiveRequest(BaseModel):
     profile: str = Field(..., min_length=2, max_length=300)
     max_videos: int = Field(100, ge=10, le=500)
-    transcribe: bool = True
 
 
 def _sse(payload: dict) -> str:
@@ -92,7 +91,6 @@ async def health():
         "ok": True,
         "service": "repostly",
         "local_mode": not light,
-        "whisper": bool(os.getenv("OPENAI_API_KEY", "").strip()),
         "archive_max": 20 if light else 500,
     }
 
@@ -102,7 +100,6 @@ async def capabilities():
     light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
     return {
         "local_mode": not light,
-        "whisper": bool(os.getenv("OPENAI_API_KEY", "").strip()),
         "archive_limits": [10, 20] if light else [10, 20, 50, 100, 250, 500],
         "default_archive": 20 if light else 100,
     }
@@ -309,10 +306,9 @@ async def api_archive(req: ArchiveRequest):
     headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
     handle = extract_handle(req.profile)
     log.info(
-        "archive stream start @%s max=%s whisper=%s",
+        "archive stream start @%s max=%s",
         handle,
         max_videos,
-        bool(os.getenv("OPENAI_API_KEY", "").strip()) and req.transcribe,
     )
 
     async def event_stream():
@@ -336,7 +332,6 @@ async def api_archive(req: ArchiveRequest):
                 manifest = run_archive(
                     req.profile,
                     max_videos=max_videos,
-                    transcribe=req.transcribe,
                     headless=headless,
                     on_profile=on_profile,
                     on_progress=on_progress,
@@ -401,7 +396,6 @@ async def api_archive(req: ArchiveRequest):
             "found": manifest.get("found"),
             "downloaded": manifest.get("downloaded"),
             "transcribed": manifest.get("transcribed"),
-            "whisper_enabled": manifest.get("whisper_enabled"),
             "local_mode": manifest.get("local_mode"),
             "out_dir": manifest.get("out_dir"),
             "zip": manifest.get("zip"),

@@ -7,7 +7,6 @@
   const profile = document.getElementById("profile");
   const maxEl = document.getElementById("max");
   const maxVideosEl = document.getElementById("max-videos");
-  const transcribeEl = document.getElementById("transcribe");
   const go = document.getElementById("go");
   const goArchive = document.getElementById("go-archive");
   const status = document.getElementById("status");
@@ -801,14 +800,6 @@
         : "0× cheaterbuster";
     kwEl.classList.remove("hidden");
 
-    const w = document.getElementById("arch-whisper");
-    if (data.whisper_enabled) {
-      w.textContent = "texte paroles ON";
-      w.classList.remove("hidden");
-    } else {
-      w.textContent = "texte partiel";
-      w.classList.remove("hidden");
-    }
     const loc = document.getElementById("arch-local");
     if (data.local_mode) {
       loc.textContent = "local";
@@ -871,17 +862,6 @@
     if (kwHits.length) {
       onlyKw.classList.remove("hidden");
       onlyKw.textContent = "Voir seulement cheaterbuster";
-      onlyKw.onclick = () => {
-        filterOn = !filterOn;
-        onlyKw.textContent = filterOn
-          ? "Voir toutes les vidéos"
-          : "Voir seulement cheaterbuster";
-        list.querySelectorAll(".arch-item").forEach((el) => {
-          if (!el.classList.contains("has-keyword")) {
-            el.classList.toggle("kw-hidden", filterOn);
-          }
-        });
-      };
     } else {
       onlyKw.classList.add("hidden");
     }
@@ -972,9 +952,8 @@
       const pills = [];
       if (hit) pills.push("cheaterbuster");
       const src = it.transcript_source || "";
-      if (src === "whisper") pills.push("texte paroles");
+      if (src === "description") pills.push("caption");
       else if (src === "tiktok_captions") pills.push("captions TikTok");
-      else if (src === "description") pills.push("description");
       else if (src === "cache") pills.push("cache");
       if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
       if (it.likes) pills.push(`${fmtNum(it.likes)} likes`);
@@ -992,7 +971,7 @@
 
       const txLabel = document.createElement("p");
       txLabel.className = "arch-transcript-label";
-      txLabel.textContent = "Texte / phrases (paroles)";
+      txLabel.textContent = "Texte / caption";
       body.appendChild(txLabel);
 
       const txEl = document.createElement("p");
@@ -1051,6 +1030,20 @@
       row.appendChild(body);
       list.appendChild(row);
     });
+
+    if (kwHits.length) {
+      onlyKw.onclick = () => {
+        filterOn = !filterOn;
+        onlyKw.textContent = filterOn
+          ? "Voir toutes les vidéos"
+          : "Voir seulement cheaterbuster";
+        list.querySelectorAll(".arch-item").forEach((el) => {
+          if (!el.classList.contains("has-keyword")) {
+            el.classList.toggle("kw-hidden", filterOn);
+          }
+        });
+      };
+    }
 
     showView("archive");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1129,7 +1122,6 @@
         ? {
             profile: url,
             max_videos: Number(maxVideosEl.value),
-            transcribe: Boolean(transcribeEl.checked),
           }
         : {
             profile: url,

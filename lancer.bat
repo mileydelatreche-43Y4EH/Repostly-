@@ -18,6 +18,5 @@ set SCRAPE_HEADLESS=1
 echo.
 echo  Repostly local → http://127.0.0.1:8787
 echo  Mode archive : data\archives\
-echo  Whisper : ajoute OPENAI_API_KEY dans .env
 echo.
 uvicorn server:app --reload --host 127.0.0.1 --port 8787
