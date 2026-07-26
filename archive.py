@@ -85,10 +85,15 @@ def _ffprobe_vcodec(path: Path) -> str:
 
 
 def ensure_browser_mp4(path: Path) -> Path:
-    """Ré-encode en H.264/AAC si besoin (sinon image figée / écran noir dans Chrome)."""
+    """
+    Garantit un MP4 H.264 lisible dans Chrome.
+    Écrit un fichier voisin `.browser.mp4` (n'écrase pas l'original — souvent verrouillé
+    par le navigateur / le serveur pendant la lecture).
+    """
     if not path or not path.is_file() or path.suffix.lower() != ".mp4":
         return path
-    if ".h264.tmp" in path.name:
+    name = path.name.lower()
+    if ".browser.mp4" in name or ".h264." in name or ".hevc.bak" in name:
         return path
 
     key = str(path.resolve())
@@ -96,18 +101,27 @@ def ensure_browser_mp4(path: Path) -> Path:
         lock = _CONVERT_LOCKS.setdefault(key, threading.Lock())
 
     with lock:
+        playable = path.with_name(f"{path.stem}.browser.mp4")
+        if playable.is_file() and playable.stat().st_size > 5_000:
+            pc = _ffprobe_vcodec(playable)
+            if pc in ("h264", "avc1", "avc"):
+                return playable
+
         codec = _ffprobe_vcodec(path)
         if codec in ("h264", "avc1", "avc"):
             return path
         if not codec:
             return path
 
-        tmp = path.with_suffix(".h264.tmp.mp4")
+        tmp = path.with_name(f"{path.stem}.h264.{os.getpid()}.mp4")
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [
                     "ffmpeg",
                     "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
                     "-i",
                     str(path),
                     "-c:v",
@@ -127,17 +141,37 @@ def ensure_browser_mp4(path: Path) -> Path:
                     str(tmp),
                 ],
                 capture_output=True,
-                timeout=900,
-                check=True,
+                timeout=1200,
+                check=False,
             )
-            if tmp.is_file() and tmp.stat().st_size > 5_000:
-                tmp.replace(path)
-        except Exception:
+            if proc.returncode != 0 or not tmp.is_file() or tmp.stat().st_size < 5_000:
+                err = (proc.stderr or b"").decode("utf-8", "ignore")[-500:]
+                print(f"[archive] ffmpeg fail {path.name}: {err}", flush=True)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return path
+
+            try:
+                if playable.exists():
+                    playable.unlink()
+                os.replace(tmp, playable)
+                return playable
+            except OSError as e:
+                print(f"[archive] write browser mp4 fail {path.name}: {e}", flush=True)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return path
+        except Exception as e:
+            print(f"[archive] ensure_browser_mp4 {path.name}: {e}", flush=True)
             try:
                 tmp.unlink(missing_ok=True)
             except Exception:
                 pass
-        return path
+            return path
 
 
 def _hashtags(text: str) -> list[str]:
@@ -603,6 +637,8 @@ def run_archive(
             if p.name == zip_path.name:
                 continue
             if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv", ".vtt"):
+                if ".browser.mp4" in p.name.lower() or ".h264." in p.name.lower():
+                    continue
                 zf.write(p, arcname=p.name)
 
     manifest["zip"] = zip_path.name
