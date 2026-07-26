@@ -43,7 +43,8 @@ class AnalyzeRequest(BaseModel):
 
 class ArchiveRequest(BaseModel):
     profile: str = Field(..., min_length=2, max_length=300)
-    max_videos: int = Field(100, ge=10, le=500)
+    # 0 = toutes les vidéos du compte
+    max_videos: int = Field(100, ge=0, le=2000)
 
 
 def _sse(payload: dict) -> str:
@@ -91,7 +92,7 @@ async def health():
         "ok": True,
         "service": "repostly",
         "local_mode": not light,
-        "archive_max": 20 if light else 500,
+        "archive_max": 20 if light else 0,
     }
 
 
@@ -100,8 +101,8 @@ async def capabilities():
     light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
     return {
         "local_mode": not light,
-        "archive_limits": [10, 20] if light else [10, 20, 50, 100, 250, 500],
-        "default_archive": 20 if light else 100,
+        "archive_limits": [10, 20] if light else [10, 20, 50, 100, 250, 500, 1000, 0],
+        "default_archive": 20 if light else 0,
     }
 
 
@@ -297,11 +298,11 @@ async def api_analyze(req: AnalyzeRequest):
 
 @app.post("/api/archive")
 async def api_archive(req: ArchiveRequest):
-    """Télécharge les vidéos postées + transcription (SSE)."""
-    allowed = {10, 20, 50, 100, 250, 500}
+    """Télécharge les vidéos postées + paroles (sous-titres) (SSE)."""
+    allowed = {0, 10, 20, 50, 100, 250, 500, 1000, 2000}
     max_videos = req.max_videos if req.max_videos in allowed else 100
     light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
-    if light and max_videos > 20:
+    if light and (max_videos == 0 or max_videos > 20):
         max_videos = 20
     headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
     handle = extract_handle(req.profile)
@@ -382,6 +383,7 @@ async def api_archive(req: ArchiveRequest):
                     "file_size": it.get("file_size") or 0,
                     "transcript": it.get("transcript"),
                     "transcript_source": it.get("transcript_source"),
+                    "has_keyword": bool(it.get("has_keyword")),
                     "error": it.get("error"),
                     "plays": it.get("plays"),
                     "likes": it.get("likes"),
@@ -396,10 +398,13 @@ async def api_archive(req: ArchiveRequest):
             "found": manifest.get("found"),
             "downloaded": manifest.get("downloaded"),
             "transcribed": manifest.get("transcribed"),
+            "keyword": manifest.get("keyword") or "cheaterbuster",
+            "keyword_hits": manifest.get("keyword_hits") or 0,
             "local_mode": manifest.get("local_mode"),
             "out_dir": manifest.get("out_dir"),
             "zip": manifest.get("zip"),
             "all_transcripts": manifest.get("all_transcripts"),
+            "keyword_file": manifest.get("keyword_file"),
             "items": light_items,
         }
         yield _sse({"type": "result", "data": payload})

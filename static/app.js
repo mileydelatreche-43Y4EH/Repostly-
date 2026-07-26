@@ -773,7 +773,10 @@
 
     const items = data.items || [];
     const kwHits = items.filter(
-      (it) => textHasKeyword(it.transcript, KEYWORD) || textHasKeyword(it.caption, KEYWORD),
+      (it) =>
+        it.has_keyword ||
+        textHasKeyword(it.transcript, KEYWORD) ||
+        textHasKeyword(it.caption, KEYWORD),
     );
     // Matches first
     const ordered = [
@@ -786,7 +789,7 @@
     const req = Number(data.requested || 0);
     const found = Number(data.found || items.length || 0);
     document.getElementById("arch-count").textContent =
-      `${dl} MP4` + (req ? ` / ${req}` : "");
+      req === 0 ? `${dl} MP4 (compte entier)` : `${dl} MP4 / ${req}`;
     const foundEl = document.getElementById("arch-found");
     foundEl.textContent = `${found} trouvé${found === 1 ? "" : "s"}`;
     foundEl.classList.remove("hidden");
@@ -794,10 +797,9 @@
       `${tx} texte${tx === 1 ? "" : "s"}`;
 
     const kwEl = document.getElementById("arch-keyword");
+    const hits = Number(data.keyword_hits != null ? data.keyword_hits : kwHits.length);
     kwEl.textContent =
-      kwHits.length > 0
-        ? `${kwHits.length}× cheaterbuster`
-        : "0× cheaterbuster";
+      hits > 0 ? `${hits}× cheaterbuster` : "0× cheaterbuster";
     kwEl.classList.remove("hidden");
 
     const loc = document.getElementById("arch-local");
@@ -864,6 +866,15 @@
       onlyKw.textContent = "Voir seulement cheaterbuster";
     } else {
       onlyKw.classList.add("hidden");
+    }
+
+    // Lien fichier hits only
+    const kwFile = document.getElementById("arch-kw-file");
+    if (data.keyword_file && kwFile) {
+      kwFile.href = fileUrl(data.keyword_file);
+      kwFile.classList.remove("hidden");
+    } else if (kwFile) {
+      kwFile.classList.add("hidden");
     }
 
     const fmtNum = (n) => {
@@ -952,7 +963,8 @@
       const pills = [];
       if (hit) pills.push("cheaterbuster");
       const src = it.transcript_source || "";
-      if (src === "description") pills.push("caption");
+      if (src === "subtitles") pills.push("paroles");
+      else if (src === "description") pills.push("caption");
       else if (src === "tiktok_captions") pills.push("captions TikTok");
       else if (src === "cache") pills.push("cache");
       if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
@@ -971,7 +983,7 @@
 
       const txLabel = document.createElement("p");
       txLabel.className = "arch-transcript-label";
-      txLabel.textContent = "Texte / caption";
+      txLabel.textContent = "Paroles / texte";
       body.appendChild(txLabel);
 
       const txEl = document.createElement("p");
@@ -1043,6 +1055,14 @@
           }
         });
       };
+      // Affiche d'abord les hits
+      filterOn = true;
+      onlyKw.textContent = "Voir toutes les vidéos";
+      list.querySelectorAll(".arch-item").forEach((el) => {
+        if (!el.classList.contains("has-keyword")) {
+          el.classList.add("kw-hidden");
+        }
+      });
     }
 
     showView("archive");
@@ -1061,7 +1081,7 @@
       limits.forEach((n) => {
         const opt = document.createElement("option");
         opt.value = String(n);
-        opt.textContent = String(n);
+        opt.textContent = n === 0 ? "Toutes" : String(n);
         if (String(n) === current) opt.selected = true;
         sel.appendChild(opt);
       });
