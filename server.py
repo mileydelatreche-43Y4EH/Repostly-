@@ -444,8 +444,10 @@ async def api_archive_file(handle: str, filename: str):
     if not path:
         raise HTTPException(404, "Fichier introuvable")
     media = "application/octet-stream"
+    disposition = "attachment"
     if filename.endswith(".mp4"):
         media = "video/mp4"
+        disposition = "inline"  # indispensable pour <video>
     elif filename.endswith(".txt"):
         media = "text/plain; charset=utf-8"
     elif filename.endswith(".zip"):
@@ -456,7 +458,11 @@ async def api_archive_file(handle: str, filename: str):
         path,
         media_type=media,
         filename=filename,
-        headers={"Cache-Control": "private, max-age=3600"},
+        content_disposition_type=disposition,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Accept-Ranges": "bytes",
+        },
     )
 
 

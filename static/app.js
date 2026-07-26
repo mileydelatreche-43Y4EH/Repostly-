@@ -993,6 +993,11 @@
           video.preload = "metadata";
           video.playsInline = true;
           video.setAttribute("playsinline", "");
+          if (it.cover) {
+            video.poster = it.cover.startsWith("http")
+              ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
+              : it.cover;
+          }
           video.src = fileUrl(it.file);
           phone.appendChild(video);
 

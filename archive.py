@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -21,6 +22,15 @@ ProfileCb = Callable[[dict], None]
 # 0 = toutes les vidéos du compte
 ALLOWED_MAX = (0, 10, 20, 50, 100, 250, 500, 1000, 2000)
 KEYWORD = "cheaterbuster"
+
+# Priorité H.264 (avc1) — HEVC/AV1 = écran noir dans Chrome sans codec système
+YTDLP_FORMAT = (
+    "bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/"
+    "bv*[vcodec^=avc1]+ba/"
+    "b[ext=mp4]/"
+    "bv*[ext=mp4]+ba/"
+    "b"
+)
 
 
 def _is_light() -> bool:
@@ -43,6 +53,79 @@ def _progress(cb: ProgressCb | None, msg: str) -> None:
             cb(msg)
         except Exception:
             pass
+
+
+def _ffprobe_vcodec(path: Path) -> str:
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        return (r.stdout or "").strip().lower().split("\n")[0].strip()
+    except Exception:
+        return ""
+
+
+def ensure_browser_mp4(path: Path) -> Path:
+    """Ré-encode en H.264/AAC si besoin (sinon écran noir dans Chrome)."""
+    if not path or not path.is_file() or path.suffix.lower() != ".mp4":
+        return path
+    codec = _ffprobe_vcodec(path)
+    if codec in ("h264", "avc1", "avc"):
+        return path
+    if not codec:
+        return path
+
+    tmp = path.with_suffix(".h264.tmp.mp4")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(path),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                "-pix_fmt",
+                "yuv420p",
+                str(tmp),
+            ],
+            capture_output=True,
+            timeout=900,
+            check=True,
+        )
+        if tmp.is_file() and tmp.stat().st_size > 5_000:
+            tmp.replace(path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return path
 
 
 def _hashtags(text: str) -> list[str]:
@@ -186,7 +269,7 @@ def _download_one(url: str, out_path: Path) -> tuple[Path | None, str]:
     stem = out_path.with_suffix("")
     tmpl = str(stem) + ".%(ext)s"
     opts = {
-        "format": "bv*+ba/b",
+        "format": YTDLP_FORMAT,
         "merge_output_format": "mp4",
         "outtmpl": tmpl,
         "quiet": True,
@@ -236,6 +319,9 @@ def _download_one(url: str, out_path: Path) -> tuple[Path | None, str]:
             downloaded = best
     elif out_path.with_suffix(".mp4").exists():
         downloaded = out_path.with_suffix(".mp4")
+
+    if downloaded:
+        ensure_browser_mp4(downloaded)
 
     return downloaded, spoken
 
