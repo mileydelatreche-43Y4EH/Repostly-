@@ -337,12 +337,7 @@ html.dark .theme-toggle .icon-sun {
   height: 2.6rem;
   padding: 0 1.25rem;
   text-decoration: none;
-  margin-top: 0.85rem;
   font-size: 0.92rem;
-}
-
-.arch-actions {
-  margin: 0;
 }
 
 .arch-list {
@@ -618,6 +613,27 @@ html.dark .pill.kw-pill {
   flex-wrap: wrap;
   gap: 0.55rem;
   align-items: center;
+}
+
+.arch-actions .btn-inline,
+.arch-actions .btn-inline-ghost {
+  margin: 0;
+  height: 2.6rem;
+  min-height: 2.6rem;
+  box-sizing: border-box;
+  font-size: 0.88rem;
+  line-height: 1;
+  padding: 0 1.1rem;
+}
+
+.arch-actions .btn-primary {
+  height: 2.6rem;
+  min-height: 2.6rem;
+  box-shadow: 0 6px 16px rgba(0, 113, 227, 0.25);
+}
+
+.arch-actions .btn-ghost {
+  margin-bottom: 0;
 }
 
 
