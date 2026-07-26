@@ -1046,34 +1046,6 @@
         title.textContent = hit ? `Video ${idx + 1} — cheaterbuster` : `Video ${idx + 1}`;
         body.appendChild(title);
 
-        if (it.caption) {
-          const cap = document.createElement("p");
-          cap.className = "arch-caption";
-          cap.appendChild(highlightKeyword(it.caption, KEYWORD));
-          body.appendChild(cap);
-        }
-
-        const meta = document.createElement("div");
-        meta.className = "arch-meta";
-        const pills = [];
-        if (hit) pills.push("cheaterbuster");
-        const src = it.transcript_source || "";
-        if (src === "subtitles") pills.push("paroles");
-        else if (src === "description") pills.push("caption");
-        if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
-        if (it.likes) pills.push(`${fmtNum(it.likes)} likes`);
-        if (it.plays) pills.push(`${fmtNum(it.plays)} vues`);
-        const d = fmtDate(it.create_time);
-        if (d) pills.push(d);
-        (it.hashtags || []).slice(0, 6).forEach((h) => pills.push(`#${h}`));
-        pills.forEach((t) => {
-          const pill = document.createElement("span");
-          pill.className = "pill soft" + (t === "cheaterbuster" ? " kw-pill" : "");
-          pill.textContent = t;
-          meta.appendChild(pill);
-        });
-        body.appendChild(meta);
-
         const txLabel = document.createElement("p");
         txLabel.className = "arch-transcript-label";
         txLabel.textContent = "Paroles / texte";
@@ -1085,25 +1057,6 @@
           highlightKeyword(it.transcript || "Aucun texte extrait.", KEYWORD),
         );
         body.appendChild(txEl);
-
-        const links = document.createElement("div");
-        links.className = "arch-links";
-        if (it.url) {
-          const a = document.createElement("a");
-          a.href = it.url;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          a.textContent = "Ouvrir sur TikTok";
-          links.appendChild(a);
-        }
-        body.appendChild(links);
-
-        if (it.error) {
-          const err = document.createElement("p");
-          err.className = "arch-err";
-          err.textContent = it.error;
-          body.appendChild(err);
-        }
 
         row.appendChild(body);
         list.appendChild(row);
