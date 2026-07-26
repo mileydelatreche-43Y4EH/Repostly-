@@ -43,6 +43,94 @@ def _progress(cb: ProgressCb | None, msg: str) -> None:
             pass
 
 
+def _hashtags(text: str) -> list[str]:
+    return [h.lstrip("#") for h in re.findall(r"#([\w\u00C0-\u024F]+)", text or "")][:20]
+
+
+def _thumb(entry: dict[str, Any]) -> str:
+    thumbs = entry.get("thumbnails") or []
+    if isinstance(thumbs, list) and thumbs:
+        best = max(
+            (t for t in thumbs if isinstance(t, dict) and t.get("url")),
+            key=lambda t: int(t.get("preference") or 0),
+            default=None,
+        )
+        if best:
+            return str(best.get("url") or "")
+        return str(thumbs[0].get("url") or "")
+    return str(entry.get("thumbnail") or "")
+
+
+def list_posts_ytdlp(
+    handle: str,
+    *,
+    max_items: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Liste les vidéos du profil via yt-dlp (fiable en local, sans Playwright)."""
+    try:
+        import yt_dlp
+    except ImportError as e:
+        raise RuntimeError("yt-dlp manquant — pip install yt-dlp") from e
+
+    url = f"https://www.tiktok.com/@{handle}"
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "playlistend": max_items,
+        "skip_download": True,
+        "ignoreerrors": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    if not isinstance(info, dict):
+        return [], {"handle": handle, "nickname": handle}
+
+    entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+    posts: list[dict[str, Any]] = []
+    nickname = (
+        info.get("channel")
+        or info.get("uploader")
+        or (entries[0].get("channel") if entries else "")
+        or handle
+    )
+    for e in entries[:max_items]:
+        vid = str(e.get("id") or "").strip()
+        if not vid:
+            continue
+        title = str(e.get("title") or e.get("description") or "").strip()
+        posts.append(
+            {
+                "kind": "post",
+                "id": vid,
+                "caption": title[:500],
+                "author": str(e.get("uploader") or handle),
+                "music": "",
+                "hashtags": _hashtags(title),
+                "url": e.get("url")
+                or e.get("webpage_url")
+                or f"https://www.tiktok.com/@{handle}/video/{vid}",
+                "cover": _thumb(e),
+                "plays": int(e.get("view_count") or 0),
+                "likes": int(e.get("like_count") or 0),
+                "create_time": int(e.get("timestamp") or 0),
+                "spoken_hints": "",
+            }
+        )
+
+    profile = {
+        "handle": handle,
+        "nickname": str(nickname).strip() or handle,
+        "avatar": "",
+        "avatar_url": "",
+        "bio": "",
+        "video_count": len(posts),
+        "repost_count": 0,
+    }
+    return posts, profile
+
+
 def _download_one(url: str, out_path: Path) -> Path | None:
     """Télécharge une vidéo TikTok en meilleure qualité via yt-dlp."""
     try:
@@ -159,37 +247,66 @@ def run_archive(
     on_progress: ProgressCb | None = None,
 ) -> dict[str, Any]:
     """
-    1) Liste les posts du compte
-    2) Télécharge chaque vidéo (meilleure qualité)
-    3) Transcription (Whisper si clé, sinon captions TikTok)
+    1) Liste les posts (yt-dlp d'abord — Playwright souvent bloqué)
+    2) Télécharge chaque vidéo
+    3) Texte paroles (Whisper) ou caption
     """
     handle = extract_handle(profile)
     light = _is_light()
     if max_videos not in ALLOWED_MAX:
         max_videos = 100
-    # Render Free seulement
     if light and max_videos > 20:
         max_videos = 20
 
-    _progress(on_progress, f"Collecte des posts (cible {max_videos})…")
-    handle, posts, profile_data = fetch_user_posts(
-        profile,
-        max_items=max_videos,
-        headless=headless,
-        on_profile=on_profile,
-        on_progress=on_progress,
-    )
+    _progress(on_progress, f"Liste des vidéos @{handle}…")
+    posts: list[dict[str, Any]] = []
+    profile_data: dict[str, Any] = {"handle": handle, "nickname": handle}
+    list_err = ""
+
+    try:
+        posts, profile_data = list_posts_ytdlp(handle, max_items=max_videos)
+        _progress(on_progress, f"{len(posts)} vidéos listées (yt-dlp)…")
+    except Exception as e:
+        list_err = str(e)
+        _progress(on_progress, f"yt-dlp échoué — fallback navigateur… ({e})")
+
+    if on_profile:
+        try:
+            on_profile(dict(profile_data))
+        except Exception:
+            pass
+
+    if not posts:
+        try:
+            handle, posts, profile_data = fetch_user_posts(
+                profile,
+                max_items=max_videos,
+                headless=headless,
+                on_profile=on_profile,
+                on_progress=on_progress,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                "Aucune vidéo trouvée. "
+                + (f"yt-dlp: {list_err}. " if list_err else "")
+                + f"Navigateur: {e}"
+            ) from e
+
+    if not posts:
+        raise RuntimeError(
+            "Aucune vidéo postée trouvée pour ce compte "
+            "(TikTok a peut‑être limité la requête)."
+        )
 
     out_dir = archive_dir(handle)
     whisper_ok = bool(os.getenv("OPENAI_API_KEY", "").strip())
     if transcribe and not whisper_ok:
         _progress(
             on_progress,
-            "Pas de OPENAI_API_KEY — captions TikTok / description seulement.",
+            "Pas de OPENAI_API_KEY — textes = captions / descriptions.",
         )
 
     total = len(posts)
-    # Phase download (parallèle léger en local)
     workers = 1 if light else min(3, max(1, total))
     download_map: dict[str, tuple[Path | None, str]] = {}
 
@@ -245,7 +362,6 @@ def run_archive(
             except Exception:
                 prev_source = ""
 
-        # Cache : reprend Whisper déjà fait ; sinon captions/fichier texte
         if transcript_path.exists() and transcript_path.stat().st_size > 2:
             cached = transcript_path.read_text(encoding="utf-8").strip()
             if cached:
@@ -255,7 +371,7 @@ def run_archive(
 
         if transcribe and whisper_ok and downloaded and not transcript:
             try:
-                _progress(on_progress, f"Transcription IA {i}/{total}…")
+                _progress(on_progress, f"Texte paroles {i}/{total}…")
                 transcript = _whisper_transcribe(downloaded)
                 source = "whisper" if transcript else ""
             except Exception as e:
