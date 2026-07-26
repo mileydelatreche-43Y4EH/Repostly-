@@ -1059,6 +1059,9 @@
         );
         body.appendChild(txEl);
 
+        const actions = document.createElement("div");
+        actions.className = "arch-item-actions";
+
         if (it.file) {
           const dlBtn = document.createElement("button");
           dlBtn.type = "button";
@@ -1074,7 +1077,27 @@
             a.click();
             a.remove();
           });
-          body.appendChild(dlBtn);
+          actions.appendChild(dlBtn);
+        }
+
+        const tiktokUrl =
+          it.url ||
+          (it.id && handle
+            ? `https://www.tiktok.com/@${handle}/video/${it.id}`
+            : "");
+        if (tiktokUrl) {
+          const tk = document.createElement("a");
+          tk.className = "arch-tiktok-btn";
+          tk.href = tiktokUrl;
+          tk.target = "_blank";
+          tk.rel = "noopener noreferrer";
+          tk.textContent = "Voir sur TikTok";
+          tk.title = "Ouvrir la video sur TikTok";
+          actions.appendChild(tk);
+        }
+
+        if (actions.childNodes.length) {
+          body.appendChild(actions);
         }
 
         row.appendChild(body);
