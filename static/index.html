@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=39" />
+  <link rel="stylesheet" href="/static/style.css?v=40" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="ThÃ¨me">
@@ -247,12 +247,23 @@
             <span id="arch-local" class="pill soft hidden"></span>
           </div>
           <p class="arch-actions">
-            <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Télécharger le ZIP</a>
-            <a id="arch-all-txt" class="btn-ghost btn-inline-ghost hidden" href="#">Tous les textes</a>
-            <a id="arch-kw-file" class="btn-ghost btn-inline-ghost hidden" href="#">TXT cheaterbuster</a>
-            <button type="button" id="arch-copy-all" class="btn-ghost btn-inline-ghost hidden">Copier toutes les phrases</button>
-            <button type="button" id="arch-only-kw" class="btn-ghost btn-inline-ghost hidden">Voir seulement cheaterbuster</button>
+            <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Telecharger le ZIP</a>
+            <button type="button" id="arch-only-kw" class="btn-ghost btn-inline-ghost hidden">Voir cheaterbuster</button>
+            <button type="button" id="arch-show-all" class="btn-ghost btn-inline-ghost hidden">Voir les autres</button>
           </p>
+          <div id="arch-filters" class="arch-filters hidden">
+            <label class="arch-filter">
+              <span>Trier</span>
+              <select id="arch-sort">
+                <option value="date-desc">Plus recentes</option>
+                <option value="date-asc">Plus anciennes</option>
+                <option value="views-desc">Plus de vues</option>
+                <option value="views-asc">Moins de vues</option>
+                <option value="likes-desc">Plus de likes</option>
+                <option value="likes-asc">Moins de likes</option>
+              </select>
+            </label>
+          </div>
         </div>
       </header>
 
@@ -260,7 +271,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=39"></script>
+  <script src="/static/app.js?v=40"></script>
 </body>
 </html>
 

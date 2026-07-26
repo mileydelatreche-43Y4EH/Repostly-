@@ -575,6 +575,43 @@ html.dark .pill.kw-pill {
   word-break: break-all;
 }
 
+.arch-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  align-items: end;
+}
+
+.arch-filter {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.arch-filter select {
+  min-width: 180px;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--input);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 0 2.2rem 0 0.95rem;
+  appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+}
+
 .arch-actions {
   margin: 0.35rem 0 0;
   display: flex;
@@ -582,6 +619,7 @@ html.dark .pill.kw-pill {
   gap: 0.55rem;
   align-items: center;
 }
+
 
 .btn-inline-ghost {
   display: inline-flex;
@@ -600,9 +638,17 @@ html.dark .pill.kw-pill {
   font-weight: 600;
 }
 
-.btn-inline-ghost:hover {
-  background: var(--input);
+.btn-inline-ghost.active-filter {
+  border-color: rgba(255, 45, 85, 0.45);
+  color: #ff2d55;
+  background: rgba(255, 45, 85, 0.12);
 }
+
+html.dark .btn-inline-ghost.active-filter {
+  color: #ff453a;
+  background: rgba(255, 69, 58, 0.18);
+}
+
 
 @media (max-width: 720px) {
   .arch-item {

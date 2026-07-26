@@ -778,11 +778,6 @@
         textHasKeyword(it.transcript, KEYWORD) ||
         textHasKeyword(it.caption, KEYWORD),
     );
-    // Matches first
-    const ordered = [
-      ...kwHits,
-      ...items.filter((it) => !kwHits.includes(it)),
-    ];
 
     const dl = Number(data.downloaded || 0);
     const tx = Number(data.transcribed || 0);
@@ -819,57 +814,10 @@
     const zip = document.getElementById("arch-zip");
     if (data.zip) {
       zip.href = fileUrl(data.zip);
+      zip.textContent = "Telecharger le ZIP";
       zip.classList.remove("hidden");
     } else {
       zip.classList.add("hidden");
-    }
-
-    const allTxt = document.getElementById("arch-all-txt");
-    if (data.all_transcripts) {
-      allTxt.href = fileUrl(data.all_transcripts);
-      allTxt.classList.remove("hidden");
-    } else {
-      allTxt.classList.add("hidden");
-    }
-
-    const copyBtn = document.getElementById("arch-copy-all");
-    const allPhrases = items
-      .map((it) => (it.transcript || "").trim())
-      .filter(Boolean)
-      .join("\n\n———\n\n");
-    if (allPhrases) {
-      copyBtn.classList.remove("hidden");
-      copyBtn.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(allPhrases);
-          copyBtn.textContent = "Copié ✓";
-          setTimeout(() => {
-            copyBtn.textContent = "Copier toutes les phrases";
-          }, 1600);
-        } catch (_) {
-          copyBtn.textContent = "Copie impossible";
-        }
-      };
-    } else {
-      copyBtn.classList.add("hidden");
-    }
-
-    const onlyKw = document.getElementById("arch-only-kw");
-    let filterOn = false;
-    if (kwHits.length) {
-      onlyKw.classList.remove("hidden");
-      onlyKw.textContent = "Voir seulement cheaterbuster";
-    } else {
-      onlyKw.classList.add("hidden");
-    }
-
-    // Lien fichier hits only
-    const kwFile = document.getElementById("arch-kw-file");
-    if (data.keyword_file && kwFile) {
-      kwFile.href = fileUrl(data.keyword_file);
-      kwFile.classList.remove("hidden");
-    } else if (kwFile) {
-      kwFile.classList.add("hidden");
     }
 
     const fmtNum = (n) => {
@@ -894,194 +842,224 @@
       }
     };
 
+    const isHit = (it) =>
+      Boolean(it.has_keyword) ||
+      textHasKeyword(it.transcript, KEYWORD) ||
+      textHasKeyword(it.caption, KEYWORD);
+
+    const sortItems = (arr, mode) => {
+      const out = [...arr];
+      const ts = (x) => Number(x.create_time) || 0;
+      const views = (x) => Number(x.plays) || 0;
+      const likes = (x) => Number(x.likes) || 0;
+      switch (mode) {
+        case "date-asc":
+          out.sort((a, b) => ts(a) - ts(b));
+          break;
+        case "views-desc":
+          out.sort((a, b) => views(b) - views(a));
+          break;
+        case "views-asc":
+          out.sort((a, b) => views(a) - views(b));
+          break;
+        case "likes-desc":
+          out.sort((a, b) => likes(b) - likes(a));
+          break;
+        case "likes-asc":
+          out.sort((a, b) => likes(a) - likes(b));
+          break;
+        case "date-desc":
+        default:
+          out.sort((a, b) => ts(b) - ts(a));
+          break;
+      }
+      return out;
+    };
+
+    let kwOnly = kwHits.length > 0;
+    const sortEl = document.getElementById("arch-sort");
+    const filtersEl = document.getElementById("arch-filters");
+    const onlyKw = document.getElementById("arch-only-kw");
+    const showAll = document.getElementById("arch-show-all");
+
+    if (items.length > 1) {
+      filtersEl.classList.remove("hidden");
+    } else {
+      filtersEl.classList.add("hidden");
+    }
+
+    if (kwHits.length) {
+      onlyKw.classList.remove("hidden");
+      showAll.classList.remove("hidden");
+      onlyKw.textContent = "Voir cheaterbuster";
+      showAll.textContent = "Voir les autres";
+    } else {
+      onlyKw.classList.add("hidden");
+      showAll.classList.add("hidden");
+      kwOnly = false;
+    }
+
     const list = document.getElementById("arch-list");
-    list.innerHTML = "";
-    ordered.forEach((it, idx) => {
-      const hit =
-        textHasKeyword(it.transcript, KEYWORD) || textHasKeyword(it.caption, KEYWORD);
-      const row = document.createElement("article");
-      row.className = "arch-item" + (hit ? " has-keyword" : "");
 
-      const media = document.createElement("div");
-      media.className = "arch-media";
-      const phone = document.createElement("div");
-      phone.className = "arch-phone";
+    const paint = () => {
+      const mode = sortEl?.value || "date-desc";
+      let view;
+      if (kwHits.length) {
+        view = items.filter((it) => (kwOnly ? isHit(it) : !isHit(it)));
+      } else {
+        view = items;
+      }
+      view = sortItems(view, mode);
 
-      if (it.file) {
-        const video = document.createElement("video");
-        video.className = "arch-video";
-        video.controls = true;
-        video.preload = "metadata";
-        video.playsInline = true;
-        video.setAttribute("playsinline", "");
-        video.src = fileUrl(it.file);
-        phone.appendChild(video);
+      onlyKw.classList.toggle("active-filter", kwOnly && kwHits.length > 0);
+      showAll.classList.toggle("active-filter", !kwOnly && kwHits.length > 0);
 
-        const dlBtn = document.createElement("button");
-        dlBtn.type = "button";
-        dlBtn.className = "arch-dl-overlay";
-        dlBtn.textContent = "Download";
-        dlBtn.title = "Télécharger la vidéo (qualité max)";
-        dlBtn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          const a = document.createElement("a");
-          a.href = fileUrl(it.file);
-          a.download = it.file || `${it.id || "video"}.mp4`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        });
-        phone.appendChild(dlBtn);
-      } else if (it.cover) {
-        const img = document.createElement("img");
-        img.className = "arch-cover";
-        img.alt = "";
-        img.src = it.cover.startsWith("http")
-          ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
-          : it.cover;
-        img.onerror = () => {
+      list.innerHTML = "";
+      view.forEach((it, idx) => {
+        const hit = isHit(it);
+        const row = document.createElement("article");
+        row.className = "arch-item" + (hit ? " has-keyword" : "");
+        row.dataset.plays = String(it.plays || 0);
+        row.dataset.likes = String(it.likes || 0);
+        row.dataset.ts = String(it.create_time || 0);
+
+        const media = document.createElement("div");
+        media.className = "arch-media";
+        const phone = document.createElement("div");
+        phone.className = "arch-phone";
+
+        if (it.file) {
+          const video = document.createElement("video");
+          video.className = "arch-video";
+          video.controls = true;
+          video.preload = "metadata";
+          video.playsInline = true;
+          video.setAttribute("playsinline", "");
+          video.src = fileUrl(it.file);
+          phone.appendChild(video);
+
+          const dlBtn = document.createElement("button");
+          dlBtn.type = "button";
+          dlBtn.className = "arch-dl-overlay";
+          dlBtn.textContent = "Download";
+          dlBtn.title = "Telecharger la video (qualite max)";
+          dlBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const a = document.createElement("a");
+            a.href = fileUrl(it.file);
+            a.download = it.file || `${it.id || "video"}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+          phone.appendChild(dlBtn);
+        } else if (it.cover) {
+          const img = document.createElement("img");
+          img.className = "arch-cover";
+          img.alt = "";
+          img.src = it.cover.startsWith("http")
+            ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
+            : it.cover;
+          img.onerror = () => {
+            const ph = document.createElement("div");
+            ph.className = "arch-cover placeholder";
+            ph.textContent = `#${idx + 1}`;
+            img.replaceWith(ph);
+          };
+          phone.appendChild(img);
+        } else {
           const ph = document.createElement("div");
           ph.className = "arch-cover placeholder";
           ph.textContent = `#${idx + 1}`;
-          img.replaceWith(ph);
-        };
-        phone.appendChild(img);
-      } else {
-        const ph = document.createElement("div");
-        ph.className = "arch-cover placeholder";
-        ph.textContent = `#${idx + 1}`;
-        phone.appendChild(ph);
-      }
-      media.appendChild(phone);
-      row.appendChild(media);
-
-      const body = document.createElement("div");
-      body.className = "arch-body";
-      const title = document.createElement("h3");
-      title.textContent = hit ? `Vidéo ${idx + 1} — cheaterbuster` : `Vidéo ${idx + 1}`;
-      body.appendChild(title);
-
-      if (it.caption) {
-        const cap = document.createElement("p");
-        cap.className = "arch-caption";
-        cap.appendChild(highlightKeyword(it.caption, KEYWORD));
-        body.appendChild(cap);
-      }
-
-      if (it.music) {
-        const m = document.createElement("p");
-        m.className = "arch-music";
-        m.textContent = `♪ ${it.music}`;
-        body.appendChild(m);
-      }
-
-      const meta = document.createElement("div");
-      meta.className = "arch-meta";
-      const pills = [];
-      if (hit) pills.push("cheaterbuster");
-      const src = it.transcript_source || "";
-      if (src === "subtitles") pills.push("paroles");
-      else if (src === "description") pills.push("caption");
-      else if (src === "tiktok_captions") pills.push("captions TikTok");
-      else if (src === "cache") pills.push("cache");
-      if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
-      if (it.likes) pills.push(`${fmtNum(it.likes)} likes`);
-      if (it.plays) pills.push(`${fmtNum(it.plays)} vues`);
-      const d = fmtDate(it.create_time);
-      if (d) pills.push(d);
-      (it.hashtags || []).slice(0, 6).forEach((h) => pills.push(`#${h}`));
-      pills.forEach((t) => {
-        const pill = document.createElement("span");
-        pill.className = "pill soft" + (t === "cheaterbuster" ? " kw-pill" : "");
-        pill.textContent = t;
-        meta.appendChild(pill);
-      });
-      body.appendChild(meta);
-
-      const txLabel = document.createElement("p");
-      txLabel.className = "arch-transcript-label";
-      txLabel.textContent = "Paroles / texte";
-      body.appendChild(txLabel);
-
-      const txEl = document.createElement("p");
-      txEl.className = "arch-transcript";
-      txEl.appendChild(
-        highlightKeyword(it.transcript || "Aucun texte extrait.", KEYWORD),
-      );
-      body.appendChild(txEl);
-
-      const links = document.createElement("div");
-      links.className = "arch-links";
-      if (it.file) {
-        const a = document.createElement("a");
-        a.href = fileUrl(it.file);
-        a.textContent = "Télécharger MP4";
-        a.download = it.file;
-        links.appendChild(a);
-      }
-      if (it.transcript) {
-        const a = document.createElement("a");
-        a.href = fileUrl(`${it.id}.txt`);
-        a.textContent = "Fichier .txt";
-        a.download = `${it.id}.txt`;
-        links.appendChild(a);
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.textContent = "Copier le texte";
-        copy.addEventListener("click", async () => {
-          try {
-            await navigator.clipboard.writeText(it.transcript);
-            copy.textContent = "Copié ✓";
-            setTimeout(() => {
-              copy.textContent = "Copier le texte";
-            }, 1200);
-          } catch (_) {}
-        });
-        links.appendChild(copy);
-      }
-      if (it.url) {
-        const a = document.createElement("a");
-        a.href = it.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = "Ouvrir sur TikTok";
-        links.appendChild(a);
-      }
-      body.appendChild(links);
-
-      if (it.error) {
-        const err = document.createElement("p");
-        err.className = "arch-err";
-        err.textContent = it.error;
-        body.appendChild(err);
-      }
-
-      row.appendChild(body);
-      list.appendChild(row);
-    });
-
-    if (kwHits.length) {
-      onlyKw.onclick = () => {
-        filterOn = !filterOn;
-        onlyKw.textContent = filterOn
-          ? "Voir toutes les vidéos"
-          : "Voir seulement cheaterbuster";
-        list.querySelectorAll(".arch-item").forEach((el) => {
-          if (!el.classList.contains("has-keyword")) {
-            el.classList.toggle("kw-hidden", filterOn);
-          }
-        });
-      };
-      // Affiche d'abord les hits
-      filterOn = true;
-      onlyKw.textContent = "Voir toutes les vidéos";
-      list.querySelectorAll(".arch-item").forEach((el) => {
-        if (!el.classList.contains("has-keyword")) {
-          el.classList.add("kw-hidden");
+          phone.appendChild(ph);
         }
+        media.appendChild(phone);
+        row.appendChild(media);
+
+        const body = document.createElement("div");
+        body.className = "arch-body";
+        const title = document.createElement("h3");
+        title.textContent = hit ? `Video ${idx + 1} — cheaterbuster` : `Video ${idx + 1}`;
+        body.appendChild(title);
+
+        if (it.caption) {
+          const cap = document.createElement("p");
+          cap.className = "arch-caption";
+          cap.appendChild(highlightKeyword(it.caption, KEYWORD));
+          body.appendChild(cap);
+        }
+
+        const meta = document.createElement("div");
+        meta.className = "arch-meta";
+        const pills = [];
+        if (hit) pills.push("cheaterbuster");
+        const src = it.transcript_source || "";
+        if (src === "subtitles") pills.push("paroles");
+        else if (src === "description") pills.push("caption");
+        if (it.file) pills.push(`MP4 ${fmtSize(it.file_size)}`);
+        if (it.likes) pills.push(`${fmtNum(it.likes)} likes`);
+        if (it.plays) pills.push(`${fmtNum(it.plays)} vues`);
+        const d = fmtDate(it.create_time);
+        if (d) pills.push(d);
+        (it.hashtags || []).slice(0, 6).forEach((h) => pills.push(`#${h}`));
+        pills.forEach((t) => {
+          const pill = document.createElement("span");
+          pill.className = "pill soft" + (t === "cheaterbuster" ? " kw-pill" : "");
+          pill.textContent = t;
+          meta.appendChild(pill);
+        });
+        body.appendChild(meta);
+
+        const txLabel = document.createElement("p");
+        txLabel.className = "arch-transcript-label";
+        txLabel.textContent = "Paroles / texte";
+        body.appendChild(txLabel);
+
+        const txEl = document.createElement("p");
+        txEl.className = "arch-transcript";
+        txEl.appendChild(
+          highlightKeyword(it.transcript || "Aucun texte extrait.", KEYWORD),
+        );
+        body.appendChild(txEl);
+
+        const links = document.createElement("div");
+        links.className = "arch-links";
+        if (it.url) {
+          const a = document.createElement("a");
+          a.href = it.url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.textContent = "Ouvrir sur TikTok";
+          links.appendChild(a);
+        }
+        body.appendChild(links);
+
+        if (it.error) {
+          const err = document.createElement("p");
+          err.className = "arch-err";
+          err.textContent = it.error;
+          body.appendChild(err);
+        }
+
+        row.appendChild(body);
+        list.appendChild(row);
       });
+    };
+
+    onlyKw.onclick = () => {
+      kwOnly = true;
+      paint();
+    };
+    showAll.onclick = () => {
+      kwOnly = false;
+      paint();
+    };
+    if (sortEl) {
+      sortEl.onchange = () => paint();
     }
+
+    paint();
 
     showView("archive");
     window.scrollTo({ top: 0, behavior: "smooth" });
