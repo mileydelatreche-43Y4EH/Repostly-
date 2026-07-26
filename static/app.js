@@ -1,6 +1,6 @@
 (() => {
   const RECENT_KEY = "repostly_recent";
-  const RECENT_MAX = 8;
+  const RECENT_MAX = 50;
   const THEME_KEY = "repostly_theme";
 
   const form = document.getElementById("form");
@@ -293,7 +293,8 @@
     clone.mode = mode;
 
     if (mode === "archive") {
-      clone.items = (clone.items || []).slice(0, 500).map((it) => ({
+      // Tout garder (textes + fichiers) — snapshot disque en secours si IDB trop plein
+      clone.items = (clone.items || []).map((it) => ({
         id: it.id,
         url: it.url,
         caption: it.caption,
@@ -310,7 +311,6 @@
         likes: it.likes,
         create_time: it.create_time,
       }));
-      // chemins locaux inutiles en UI
       delete clone.out_dir;
     } else {
       const trimMedia = (arr) =>
@@ -380,15 +380,10 @@
     } catch (_) {
       rows = [];
     }
+    // Ordre stable : plus récent en premier, sans supprimer d'entrées
     rows.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
     if (rows.length > RECENT_MAX) {
-      const drop = rows.slice(RECENT_MAX);
       rows = rows.slice(0, RECENT_MAX);
-      for (const d of drop) {
-        try {
-          await idbDelete(d.id || recentId(d.mode || "reposts", d.handle));
-        } catch (_) {}
-      }
     }
     // Réhydrate photos depuis le store avatars
     for (const row of rows) {
@@ -426,6 +421,7 @@
       } catch (_) {}
     }
 
+    const slim = slimPayload(data);
     const entry = {
       id,
       mode,
@@ -437,15 +433,35 @@
           ? `/api/avatar?u=${encodeURIComponent(httpAvatar)}`
           : "",
       savedAt: Date.now(),
-      data: slimPayload(data),
+      data: slim,
+      // marqueur : restauration possible depuis le disque serveur
+      hasSnapshot: mode === "archive",
     };
 
     try {
       await idbPut(entry);
     } catch (err) {
+      // Si trop gros (beaucoup de textes) : garder une entrée légère + snapshot disque
       entry.avatar = httpAvatar
         ? `/api/avatar?u=${encodeURIComponent(httpAvatar)}`
         : "";
+      if (mode === "archive") {
+        entry.data = {
+          mode: "archive",
+          handle,
+          profile: {
+            handle,
+            nickname: p.nickname || handle,
+            avatar_url: httpAvatar || "",
+            bio: p.bio || "",
+          },
+          downloaded: slim.downloaded,
+          keyword_hits: slim.keyword_hits,
+          items: [],
+          zip: slim.zip || "",
+          _fromDisk: true,
+        };
+      }
       try {
         await idbPut(entry);
       } catch (_) {
@@ -528,8 +544,25 @@
             payload = fresh?.data ? JSON.parse(JSON.stringify(fresh.data)) : null;
           } catch (_) {}
         }
+
+        // Archive : toujours préférer le snapshot disque (vidéos + textes figés)
+        if (mode === "archive" || payload?.mode === "archive" || entry.hasSnapshot) {
+          setStatus("Ouverture du resultat…");
+          try {
+            const res = await fetch(
+              `/api/archive/${encodeURIComponent(entry.handle)}/snapshot`,
+            );
+            if (res.ok) {
+              const snap = await res.json();
+              if (snap && (snap.items || []).length) {
+                payload = snap;
+              }
+            }
+          } catch (_) {}
+        }
+
         if (!payload) {
-          setStatus("Resultat introuvable — relance une analyse.", "error");
+          setStatus("Resultat introuvable — relance une extraction.", "error");
           return;
         }
         if (!payload.profile) payload.profile = {};
@@ -539,6 +572,7 @@
           resolveAvatarUrl(payload.profile, "");
         if (photo) payload.profile.avatar = photo;
 
+        setStatus("");
         // Ouvre directement la page resultat (pas de nouveau scrape)
         if (mode === "archive" || payload.mode === "archive") {
           setMode("archive");

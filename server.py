@@ -438,6 +438,26 @@ async def api_archive(req: ArchiveRequest):
     )
 
 
+@app.get("/api/archive/{handle}/snapshot")
+async def api_archive_snapshot(handle: str):
+    """Résultat figé sur disque — rouvre la page sans re-télécharger."""
+    from archive import ARCHIVES, _safe_handle
+
+    safe = _safe_handle(extract_handle(handle) if "@" in handle or "/" in handle else handle)
+    path = ARCHIVES / safe / "manifest.json"
+    if not path.is_file():
+        raise HTTPException(404, "Snapshot introuvable")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"Snapshot illisible: {e}") from e
+    if not isinstance(data, dict):
+        raise HTTPException(500, "Snapshot invalide")
+    data["mode"] = "archive"
+    data.pop("out_dir", None)
+    return data
+
+
 @app.get("/api/archive/{handle}/file/{filename}")
 async def api_archive_file(handle: str, filename: str):
     path = get_archive_file(handle, filename)
