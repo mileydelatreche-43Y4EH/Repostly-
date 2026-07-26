@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-from tiktok_local import extract_handle, fetch_user_posts
+from tiktok_local import extract_handle, fetch_profile_quick, fetch_user_posts
 
 ROOT = Path(__file__).resolve().parent
 ARCHIVES = ROOT / "data" / "archives"
@@ -290,13 +290,46 @@ def run_archive(
         max_videos = 20
 
     label = "toutes" if max_videos == 0 else str(max_videos)
-    _progress(on_progress, f"Liste des vidéos @{handle} (cible {label})…")
+    _progress(on_progress, f"Profil @{handle}…")
     posts: list[dict[str, Any]] = []
     profile_data: dict[str, Any] = {"handle": handle, "nickname": handle}
     list_err = ""
 
+    # Photo + bio tôt (Playwright rapide) — yt-dlp ne les fournit pas
     try:
-        posts, profile_data = list_posts_ytdlp(handle, max_items=max_videos)
+        quick = fetch_profile_quick(profile, headless=headless)
+        if isinstance(quick, dict):
+            for k in (
+                "nickname",
+                "bio",
+                "avatar",
+                "avatar_url",
+                "followers",
+                "following",
+                "likes",
+                "video_count",
+                "repost_count",
+            ):
+                if quick.get(k):
+                    profile_data[k] = quick[k]
+            if on_profile:
+                try:
+                    on_profile(dict(profile_data))
+                except Exception:
+                    pass
+    except Exception as e:
+        _progress(on_progress, f"Profil partiel… ({e})")
+
+    _progress(on_progress, f"Liste des vidéos @{handle} (cible {label})…")
+
+    try:
+        posts, listed_profile = list_posts_ytdlp(handle, max_items=max_videos)
+        # garder bio/photo déjà lus ; compléter le reste
+        if isinstance(listed_profile, dict):
+            if listed_profile.get("nickname") and not profile_data.get("nickname"):
+                profile_data["nickname"] = listed_profile["nickname"]
+            if listed_profile.get("video_count"):
+                profile_data["video_count"] = listed_profile["video_count"]
         _progress(on_progress, f"{len(posts)} vidéos listées…")
     except Exception as e:
         list_err = str(e)
@@ -313,13 +346,17 @@ def run_archive(
         if fb_max not in (10, 20, 50, 100, 250, 500):
             fb_max = 100
         try:
-            handle, posts, profile_data = fetch_user_posts(
+            handle, posts, scraped_profile = fetch_user_posts(
                 profile,
                 max_items=fb_max,
                 headless=headless,
                 on_profile=on_profile,
                 on_progress=on_progress,
             )
+            if isinstance(scraped_profile, dict):
+                for k, v in scraped_profile.items():
+                    if v and not profile_data.get(k):
+                        profile_data[k] = v
         except Exception as e:
             raise RuntimeError(
                 "Aucune vidéo trouvée. "

@@ -749,9 +749,7 @@
     const p = data.profile || {};
     const handle = data.handle || "";
     const letter = p.nickname || handle;
-    const avatar =
-      p.avatar ||
-      (p.avatar_url ? `/api/avatar?u=${encodeURIComponent(p.avatar_url)}` : "");
+    const avatar = resolveAvatarUrl(p, p.avatar || "");
     setAvatar(
       document.getElementById("arch-avatar"),
       document.getElementById("arch-fallback"),
@@ -764,10 +762,12 @@
     hEl.href = `https://www.tiktok.com/@${handle}`;
 
     const bioEl = document.getElementById("arch-bio");
-    if (p.bio) {
-      bioEl.textContent = p.bio;
+    const bio = (p.bio || "").trim();
+    if (bio) {
+      bioEl.textContent = bio;
       bioEl.classList.remove("hidden");
     } else {
+      bioEl.textContent = "";
       bioEl.classList.add("hidden");
     }
 
