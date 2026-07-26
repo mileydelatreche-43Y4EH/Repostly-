@@ -909,14 +909,35 @@
 
       const media = document.createElement("div");
       media.className = "arch-media";
+      const phone = document.createElement("div");
+      phone.className = "arch-phone";
+
       if (it.file) {
         const video = document.createElement("video");
         video.className = "arch-video";
         video.controls = true;
         video.preload = "metadata";
         video.playsInline = true;
+        video.setAttribute("playsinline", "");
         video.src = fileUrl(it.file);
-        media.appendChild(video);
+        phone.appendChild(video);
+
+        const dlBtn = document.createElement("button");
+        dlBtn.type = "button";
+        dlBtn.className = "arch-dl-overlay";
+        dlBtn.textContent = "Download";
+        dlBtn.title = "Télécharger la vidéo (qualité max)";
+        dlBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const a = document.createElement("a");
+          a.href = fileUrl(it.file);
+          a.download = it.file || `${it.id || "video"}.mp4`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        });
+        phone.appendChild(dlBtn);
       } else if (it.cover) {
         const img = document.createElement("img");
         img.className = "arch-cover";
@@ -930,16 +951,18 @@
           ph.textContent = `#${idx + 1}`;
           img.replaceWith(ph);
         };
-        media.appendChild(img);
+        phone.appendChild(img);
       } else {
         const ph = document.createElement("div");
         ph.className = "arch-cover placeholder";
         ph.textContent = `#${idx + 1}`;
-        media.appendChild(ph);
+        phone.appendChild(ph);
       }
+      media.appendChild(phone);
       row.appendChild(media);
 
       const body = document.createElement("div");
+      body.className = "arch-body";
       const title = document.createElement("h3");
       title.textContent = hit ? `Vidéo ${idx + 1} — cheaterbuster` : `Vidéo ${idx + 1}`;
       body.appendChild(title);
