@@ -61,6 +61,18 @@ async def log_requests(request: Request, call_next):
     except Exception:
         log.exception("✗ %s %s crash", request.method, request.url.path)
         raise
+    # Forcer UTF-8 sur les fichiers texte du front (évite TÃ©lÃ©charger)
+    ct = response.headers.get("content-type", "")
+    if request.url.path.startswith("/static/") and ct and "charset=" not in ct.lower():
+        base = ct.split(";")[0].strip().lower()
+        if base in (
+            "text/css",
+            "text/html",
+            "text/javascript",
+            "application/javascript",
+            "application/json",
+        ) or base.startswith("text/"):
+            response.headers["content-type"] = f"{base}; charset=utf-8"
     ms = (time.perf_counter() - started) * 1000
     # Les streams SSE se terminent "tout de suite" côté middleware — ne pas mentir
     is_stream = getattr(response, "media_type", None) == "text/event-stream"
