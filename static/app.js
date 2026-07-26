@@ -837,31 +837,18 @@
         textHasKeyword(it.caption, KEYWORD),
     );
 
-    const dl = Number(data.downloaded || 0);
-    const tx = Number(data.transcribed || 0);
-    const req = Number(data.requested || 0);
-    const found = Number(data.found || items.length || 0);
+    const dl = Number(data.downloaded || items.length || 0);
+    const n = items.length || dl;
     document.getElementById("arch-count").textContent =
-      req === 0 ? `${dl} MP4 (compte entier)` : `${dl} MP4 / ${req}`;
-    const foundEl = document.getElementById("arch-found");
-    foundEl.textContent = `${found} trouvé${found === 1 ? "" : "s"}`;
-    foundEl.classList.remove("hidden");
-    document.getElementById("arch-tx").textContent =
-      `${tx} texte${tx === 1 ? "" : "s"}`;
+      `${n} vidéo${n === 1 ? "" : "s"}`;
 
     const kwEl = document.getElementById("arch-keyword");
     const hits = Number(data.keyword_hits != null ? data.keyword_hits : kwHits.length);
     kwEl.textContent =
-      hits > 0 ? `${hits}× cheaterbuster` : "0× cheaterbuster";
-    kwEl.classList.remove("hidden");
-
-    const loc = document.getElementById("arch-local");
-    if (data.local_mode) {
-      loc.textContent = "local";
-      loc.classList.remove("hidden");
-    } else {
-      loc.classList.add("hidden");
-    }
+      hits > 0
+        ? `${hits} cheaterbuster`
+        : "0 cheaterbuster";
+    kwEl.classList.toggle("hidden", false);
 
     const folder = document.getElementById("arch-folder");
     if (folder) folder.classList.add("hidden");
