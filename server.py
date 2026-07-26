@@ -101,8 +101,8 @@ async def capabilities():
     light = os.getenv("SCRAPE_LIGHT", "0").strip() not in ("0", "false", "False")
     return {
         "local_mode": not light,
-        "archive_limits": [10, 20] if light else [10, 20, 50, 100, 250, 500, 1000, 0],
-        "default_archive": 20 if light else 0,
+        "archive_limits": [10, 20] if light else [100, 500, 0],
+        "default_archive": 20 if light else 100,
     }
 
 

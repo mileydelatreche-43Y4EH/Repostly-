@@ -1081,7 +1081,7 @@
       limits.forEach((n) => {
         const opt = document.createElement("option");
         opt.value = String(n);
-        opt.textContent = n === 0 ? "Toutes" : String(n);
+        opt.textContent = n === 0 ? "Tout" : String(n);
         if (String(n) === current) opt.selected = true;
         sel.appendChild(opt);
       });
