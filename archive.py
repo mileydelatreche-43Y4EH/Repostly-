@@ -84,6 +84,8 @@ def ensure_browser_mp4(path: Path) -> Path:
     """Ré-encode en H.264/AAC si besoin (sinon écran noir dans Chrome)."""
     if not path or not path.is_file() or path.suffix.lower() != ".mp4":
         return path
+    if ".h264.tmp" in path.name:
+        return path
     codec = _ffprobe_vcodec(path)
     if codec in ("h264", "avc1", "avc"):
         return path
@@ -605,7 +607,7 @@ def run_archive(
 def get_archive_file(handle: str, filename: str) -> Path | None:
     safe = _safe_handle(extract_handle(handle) if "@" in handle or "/" in handle else handle)
     name = Path(filename).name
-    if not name or name in (".", ".."):
+    if not name or name in (".", "..") or ".h264.tmp" in name:
         return None
     path = ARCHIVES / safe / name
     if path.is_file() and path.resolve().is_relative_to((ARCHIVES / safe).resolve()):
