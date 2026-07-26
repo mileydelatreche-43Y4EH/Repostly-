@@ -152,19 +152,31 @@
   /* —— Historique (IndexedDB = survit au refresh ; localStorage trop petit pour les photos) —— */
   const DB_NAME = "repostly_db";
   const DB_STORE = "recent";
+  const DB_VER = 3;
   const INDEX_KEY = "repostly_recent_index";
   let recentCache = [];
 
+  function recentId(mode, handle) {
+    return `${mode || "reposts"}:${String(handle || "").toLowerCase()}`;
+  }
+
   function openRecentDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 2);
-      req.onupgradeneeded = () => {
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = (ev) => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(DB_STORE)) {
-          db.createObjectStore(DB_STORE, { keyPath: "handle" });
-        }
+        const old = ev.oldVersion || 0;
         if (!db.objectStoreNames.contains("avatars")) {
           db.createObjectStore("avatars", { keyPath: "handle" });
+        }
+        if (old < 3) {
+          // Nouvelle store clé id = mode:handle (reposts + archive pour le même @)
+          if (db.objectStoreNames.contains(DB_STORE)) {
+            db.deleteObjectStore(DB_STORE);
+          }
+          db.createObjectStore(DB_STORE, { keyPath: "id" });
+        } else if (!db.objectStoreNames.contains(DB_STORE)) {
+          db.createObjectStore(DB_STORE, { keyPath: "id" });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -188,11 +200,11 @@
     }
   }
 
-  async function idbGet(handle) {
+  async function idbGet(id) {
     const db = await openRecentDb();
     try {
       return await idbReq(
-        db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(handle),
+        db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(id),
       );
     } finally {
       db.close();
@@ -211,11 +223,11 @@
     }
   }
 
-  async function idbDelete(handle) {
+  async function idbDelete(id) {
     const db = await openRecentDb();
     try {
       await idbReq(
-        db.transaction(DB_STORE, "readwrite").objectStore(DB_STORE).delete(handle),
+        db.transaction(DB_STORE, "readwrite").objectStore(DB_STORE).delete(id),
       );
     } finally {
       db.close();
@@ -224,7 +236,9 @@
 
   function writeIndex(list) {
     const index = list.map((x) => ({
+      id: x.id,
       handle: x.handle,
+      mode: x.mode,
       nickname: x.nickname,
       savedAt: x.savedAt,
     }));
@@ -275,22 +289,47 @@
 
   function slimPayload(data) {
     const clone = JSON.parse(JSON.stringify(data));
-    const trimMedia = (arr) =>
-      (arr || []).slice(0, 24).map((it) => ({
-        kind: it.kind,
+    const mode = clone.mode === "archive" ? "archive" : "reposts";
+    clone.mode = mode;
+
+    if (mode === "archive") {
+      clone.items = (clone.items || []).slice(0, 500).map((it) => ({
+        id: it.id,
+        url: it.url,
         caption: it.caption,
-        author: it.author,
         music: it.music,
         hashtags: it.hashtags,
-        url: it.url,
         cover: it.cover && !String(it.cover).startsWith("data:") ? it.cover : "",
+        file: it.file,
+        file_size: it.file_size,
+        transcript: it.transcript,
+        transcript_source: it.transcript_source,
+        has_keyword: it.has_keyword,
+        error: it.error,
         plays: it.plays,
         likes: it.likes,
-        id: it.id,
+        create_time: it.create_time,
       }));
-    clone.posts = trimMedia(clone.posts);
-    clone.reposts = trimMedia(clone.reposts);
-    // Ne pas stocker la data-URL (trop lourde) — on garde avatar_url + store séparé
+      // chemins locaux inutiles en UI
+      delete clone.out_dir;
+    } else {
+      const trimMedia = (arr) =>
+        (arr || []).slice(0, 24).map((it) => ({
+          kind: it.kind,
+          caption: it.caption,
+          author: it.author,
+          music: it.music,
+          hashtags: it.hashtags,
+          url: it.url,
+          cover: it.cover && !String(it.cover).startsWith("data:") ? it.cover : "",
+          plays: it.plays,
+          likes: it.likes,
+          id: it.id,
+        }));
+      clone.posts = trimMedia(clone.posts);
+      clone.reposts = trimMedia(clone.reposts);
+    }
+
     if (clone.profile) {
       if (!clone.profile.avatar_url && String(clone.profile.avatar || "").startsWith("http")) {
         clone.profile.avatar_url = clone.profile.avatar;
@@ -344,7 +383,7 @@
       rows = rows.slice(0, RECENT_MAX);
       for (const d of drop) {
         try {
-          await idbDelete(d.handle);
+          await idbDelete(d.id || recentId(d.mode || "reposts", d.handle));
         } catch (_) {}
       }
     }
@@ -372,11 +411,12 @@
       .replace(/^@/, "")
       .toLowerCase();
     if (!handle) return;
+    const mode = data.mode === "archive" ? "archive" : "reposts";
+    const id = recentId(mode, handle);
 
     const fullAvatar = p.avatar || "";
     const httpAvatar = p.avatar_url || (fullAvatar.startsWith("http") ? fullAvatar : "");
 
-    // Photo isolée (data-URL OK ici)
     if (fullAvatar.startsWith("data:")) {
       try {
         await idbPutAvatar(handle, fullAvatar);
@@ -384,6 +424,8 @@
     }
 
     const entry = {
+      id,
+      mode,
       handle,
       nickname: p.nickname || handle,
       avatar: fullAvatar.startsWith("data:")
@@ -411,7 +453,7 @@
 
     recentCache = [
       entry,
-      ...recentCache.filter((x) => x.handle !== handle),
+      ...recentCache.filter((x) => x.id !== id),
     ].slice(0, RECENT_MAX);
     writeIndex(recentCache);
     await renderRecent();
@@ -431,6 +473,7 @@
     recentList.innerHTML = "";
 
     list.forEach((entry) => {
+      const mode = entry.mode || entry.data?.mode || "reposts";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "recent-item";
@@ -458,7 +501,10 @@
       nick.textContent = entry.nickname || entry.handle;
       const handleEl = document.createElement("p");
       handleEl.className = "recent-handle";
-      handleEl.textContent = `@${entry.handle}`;
+      handleEl.textContent =
+        mode === "archive"
+          ? `@${entry.handle} · textes`
+          : `@${entry.handle} · reposts`;
       meta.appendChild(nick);
       meta.appendChild(handleEl);
       btn.appendChild(meta);
@@ -471,15 +517,16 @@
 
       btn.addEventListener("click", async () => {
         setStatus("");
+        const entryId = entry.id || recentId(mode, entry.handle);
         let payload = entry.data ? JSON.parse(JSON.stringify(entry.data)) : null;
         if (!payload) {
           try {
-            const fresh = await idbGet(entry.handle);
+            const fresh = await idbGet(entryId);
             payload = fresh?.data ? JSON.parse(JSON.stringify(fresh.data)) : null;
           } catch (_) {}
         }
         if (!payload) {
-          setStatus("Résultat introuvable — relance une analyse.", "error");
+          setStatus("Resultat introuvable — relance une analyse.", "error");
           return;
         }
         if (!payload.profile) payload.profile = {};
@@ -488,7 +535,15 @@
           (await idbGetAvatar(entry.handle).catch(() => "")) ||
           resolveAvatarUrl(payload.profile, "");
         if (photo) payload.profile.avatar = photo;
-        render(payload);
+
+        // Ouvre directement la page resultat (pas de nouveau scrape)
+        if (mode === "archive" || payload.mode === "archive") {
+          setMode("archive");
+          renderArchive(payload);
+        } else {
+          setMode("reposts");
+          render(payload);
+        }
       });
 
       recentList.appendChild(btn);
@@ -1175,11 +1230,11 @@
       await new Promise((r) => setTimeout(r, 350));
 
       stopScanUI();
-      if (!isArchive) {
-        await saveRecent(finalData);
-        render(finalData);
-      } else {
+      await saveRecent(finalData);
+      if (isArchive || finalData.mode === "archive") {
         renderArchive(finalData);
+      } else {
+        render(finalData);
       }
     } catch (err) {
       stopScanUI();
