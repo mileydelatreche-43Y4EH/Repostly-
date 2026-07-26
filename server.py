@@ -81,6 +81,7 @@ async def log_requests(request: Request, call_next):
 async def index():
     return FileResponse(
         ROOT / "static" / "index.html",
+        media_type="text/html; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )
 

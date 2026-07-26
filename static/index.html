@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=34" />
+  <link rel="stylesheet" href="/static/style.css?v=35" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="ThÃ¨me">
@@ -50,7 +50,7 @@
         <p class="brand">Repostly</p>
         <h1>Le profil avant<br />le premier message.</h1>
         <p class="sub">
-          Analyse les reposts, ou tÃ©lÃ©charge les vidÃ©os postÃ©es et extrais le texte parlÃ©.
+          Analyse les reposts, ou télécharge les vidéos postées et extrais le texte parlé.
         </p>
       </header>
 
@@ -80,7 +80,7 @@
 
           <div id="opts-reposts" class="row">
             <label class="field field-sm">
-              <span class="field-label">Reposts Ã  analyser</span>
+              <span class="field-label">Reposts à analyser</span>
               <select id="max">
                 <option value="100" selected>100</option>
                 <option value="500">500</option>
@@ -96,7 +96,7 @@
           <div id="opts-archive" class="archive-opts hidden">
             <div class="row">
               <label class="field field-sm">
-                <span class="field-label">VidÃ©os Ã  rÃ©cupÃ©rer</span>
+                <span class="field-label">Vidéos à récupérer</span>
                 <select id="max-videos">
                   <option value="100" selected>100</option>
                   <option value="500">500</option>
@@ -113,7 +113,7 @@
       </section>
 
       <section id="recent-wrap" class="recent-wrap hidden">
-        <h2 class="recent-title">Recherches rÃ©centes</h2>
+        <h2 class="recent-title">Recherches récentes</h2>
         <div id="recent-list" class="recent-list"></div>
       </section>
     </section>
@@ -140,13 +140,13 @@
 
     <!-- RESULTS -->
     <section id="view-results" class="view view-results hidden">
-      <button type="button" id="back-home" class="btn-ghost">â† Nouvelle analyse</button>
+      <button type="button" id="back-home" class="btn-ghost">← Nouvelle analyse</button>
 
       <header class="result-hero">
         <img id="res-avatar" class="res-avatar hidden" alt="" />
         <div id="res-fallback" class="res-fallback">@</div>
         <div class="result-hero-text">
-          <h1 id="res-nick" class="res-nick">â€”</h1>
+          <h1 id="res-nick" class="res-nick">—</h1>
           <a id="res-handle" class="res-handle" href="#" target="_blank" rel="noopener noreferrer">@</a>
           <p id="res-bio" class="res-bio hidden"></p>
           <div class="meta-row">
@@ -231,13 +231,13 @@
 
     <!-- ARCHIVE RESULTS -->
     <section id="view-archive" class="view view-results hidden">
-      <button type="button" id="back-home-archive" class="btn-ghost">â† Nouveau scan</button>
+      <button type="button" id="back-home-archive" class="btn-ghost">← Nouveau scan</button>
 
       <header class="result-hero">
         <img id="arch-avatar" class="res-avatar hidden" alt="" />
         <div id="arch-fallback" class="res-fallback">@</div>
         <div class="result-hero-text">
-          <h1 id="arch-nick" class="res-nick">â€”</h1>
+          <h1 id="arch-nick" class="res-nick">—</h1>
           <a id="arch-handle" class="res-handle" href="#" target="_blank" rel="noopener noreferrer">@</a>
           <p id="arch-bio" class="res-bio hidden"></p>
           <div class="meta-row">
@@ -249,7 +249,7 @@
           </div>
           <p id="arch-folder" class="arch-folder hidden"></p>
           <p class="arch-actions">
-            <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">TÃ©lÃ©charger le ZIP</a>
+            <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Télécharger le ZIP</a>
             <a id="arch-all-txt" class="btn-ghost btn-inline-ghost hidden" href="#">Tous les textes</a>
             <a id="arch-kw-file" class="btn-ghost btn-inline-ghost hidden" href="#">TXT cheaterbuster</a>
             <button type="button" id="arch-copy-all" class="btn-ghost btn-inline-ghost hidden">Copier toutes les phrases</button>
@@ -262,7 +262,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=34"></script>
+  <script src="/static/app.js?v=35"></script>
 </body>
 </html>
 
