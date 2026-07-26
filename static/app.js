@@ -354,7 +354,10 @@
         } else if (avatar.startsWith("data:")) {
           await idbPutAvatar(handle, avatar);
         }
+        const mode = data?.mode === "archive" ? "archive" : "reposts";
         await idbPut({
+          id: recentId(mode, handle),
+          mode,
           handle,
           nickname: row.nickname || row.handle,
           avatar: avatar.startsWith("http") ? avatar : "",
