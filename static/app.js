@@ -1008,20 +1008,86 @@
         phone.className = "arch-phone";
 
         if (it.file) {
+          const src =
+            fileUrl(it.file) + `?v=${encodeURIComponent(it.id || it.file)}`;
           const video = document.createElement("video");
-          video.className = "arch-video";
+          video.className = "arch-video hidden";
           video.controls = true;
-          video.preload = "auto";
+          video.preload = "none";
           video.playsInline = true;
           video.setAttribute("playsinline", "");
           video.setAttribute("controlslist", "nodownload");
-          // Pas de poster : sinon ça ressemble à une image figée
-          video.src = fileUrl(it.file) + `?v=${encodeURIComponent(it.id || it.file)}`;
+          video.dataset.src = src;
+
+          const coverWrap = document.createElement("button");
+          coverWrap.type = "button";
+          coverWrap.className = "arch-play-cover";
+          coverWrap.title = "Lire la video";
+          coverWrap.setAttribute("aria-label", "Lire la video");
+
+          if (it.cover) {
+            const img = document.createElement("img");
+            img.className = "arch-cover";
+            img.alt = "";
+            img.loading = "lazy";
+            img.src = it.cover.startsWith("http")
+              ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
+              : it.cover;
+            img.onerror = () => {
+              img.remove();
+              coverWrap.classList.add("no-thumb");
+            };
+            coverWrap.appendChild(img);
+          } else {
+            coverWrap.classList.add("no-thumb");
+          }
+
+          const playIcon = document.createElement("span");
+          playIcon.className = "arch-play-icon";
+          playIcon.setAttribute("aria-hidden", "true");
+          playIcon.textContent = "▶";
+          coverWrap.appendChild(playIcon);
+
+          const startVideo = async () => {
+            // Stoppe / décharge les autres pour ne charger qu'une vidéo
+            list.querySelectorAll("video.arch-video").forEach((v) => {
+              if (v === video) return;
+              try {
+                v.pause();
+              } catch (_) {}
+              if (v.src) {
+                v.removeAttribute("src");
+                v.load();
+              }
+              v.classList.add("hidden");
+              const otherCover = v.parentElement?.querySelector(".arch-play-cover");
+              if (otherCover) otherCover.classList.remove("hidden");
+            });
+
+            coverWrap.classList.add("hidden");
+            video.classList.remove("hidden");
+            if (!video.src) {
+              video.src = video.dataset.src;
+            }
+            try {
+              await video.play();
+            } catch (_) {
+              /* l'utilisateur pourra utiliser les contrôles */
+            }
+          };
+
+          coverWrap.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            void startVideo();
+          });
+
+          phone.appendChild(coverWrap);
           phone.appendChild(video);
         } else if (it.cover) {
           const img = document.createElement("img");
           img.className = "arch-cover";
           img.alt = "";
+          img.loading = "lazy";
           img.src = it.cover.startsWith("http")
             ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
             : it.cover;
