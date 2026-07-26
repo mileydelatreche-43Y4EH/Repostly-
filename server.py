@@ -16,7 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from analyze import analyze_profile
+from archive import get_archive_file, run_archive
 from tiktok_local import extract_handle, fetch_profile_content, fetch_profile_quick
+
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
@@ -37,6 +39,12 @@ class ProfileRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     profile: str = Field(..., min_length=2, max_length=300)
     max_reposts: int = Field(100, ge=100, le=1000)
+
+
+class ArchiveRequest(BaseModel):
+    profile: str = Field(..., min_length=2, max_length=300)
+    max_videos: int = Field(20, ge=10, le=100)
+    transcribe: bool = True
 
 
 def _sse(payload: dict) -> str:
@@ -261,6 +269,7 @@ async def api_analyze(req: AnalyzeRequest):
         }
         yield _sse({"type": "result", "data": payload})
         log.info("stream complete @%s", h)
+
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
@@ -268,6 +277,145 @@ async def api_analyze(req: AnalyzeRequest):
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.post("/api/archive")
+async def api_archive(req: ArchiveRequest):
+    """Télécharge les vidéos postées + transcription (SSE)."""
+    allowed = {10, 20, 50, 100}
+    max_videos = req.max_videos if req.max_videos in allowed else 20
+    headless = os.getenv("SCRAPE_HEADLESS", "1").strip() not in ("0", "false", "False")
+    handle = extract_handle(req.profile)
+    log.info(
+        "archive stream start @%s max=%s whisper=%s",
+        handle,
+        max_videos,
+        bool(os.getenv("OPENAI_API_KEY", "").strip()) and req.transcribe,
+    )
+
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        box: dict = {}
+
+        def emit(obj: dict) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, obj)
+
+        def on_profile(profile: dict) -> None:
+            emit({"type": "profile", "data": profile})
+
+        def on_progress(message: str) -> None:
+            log.info("archive progress @%s: %s", handle, message)
+            emit({"type": "progress", "message": message})
+
+        def work() -> None:
+            try:
+                emit({"type": "progress", "message": "Lancement…"})
+                manifest = run_archive(
+                    req.profile,
+                    max_videos=max_videos,
+                    transcribe=req.transcribe,
+                    headless=headless,
+                    on_profile=on_profile,
+                    on_progress=on_progress,
+                )
+                box["ok"] = manifest
+            except Exception as e:
+                box["err"] = e
+                log.exception("archive thread fail @%s", handle)
+            finally:
+                emit({"type": "_done"})
+
+        worker = asyncio.create_task(asyncio.to_thread(work))
+
+        while True:
+            try:
+                ev = await asyncio.wait_for(queue.get(), timeout=8.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                if worker.done():
+                    break
+                continue
+            if ev.get("type") == "_done":
+                break
+            yield _sse(ev)
+
+        await worker
+
+        if "err" in box:
+            yield _sse({"type": "error", "detail": str(box["err"])})
+            return
+        if "ok" not in box:
+            yield _sse({"type": "error", "detail": "Archive interrompue."})
+            return
+
+        manifest = box["ok"]
+        # Ne pas renvoyer de blobs — juste métadonnées + textes
+        light_items = []
+        for it in manifest.get("items") or []:
+            light_items.append(
+                {
+                    "id": it.get("id"),
+                    "url": it.get("url"),
+                    "caption": it.get("caption"),
+                    "cover": it.get("cover"),
+                    "file": it.get("file"),
+                    "transcript": it.get("transcript"),
+                    "transcript_source": it.get("transcript_source"),
+                    "error": it.get("error"),
+                    "plays": it.get("plays"),
+                    "likes": it.get("likes"),
+                }
+            )
+        payload = {
+            "mode": "archive",
+            "handle": manifest.get("handle"),
+            "profile": manifest.get("profile") or {},
+            "requested": manifest.get("requested"),
+            "downloaded": manifest.get("downloaded"),
+            "transcribed": manifest.get("transcribed"),
+            "whisper_enabled": manifest.get("whisper_enabled"),
+            "zip": manifest.get("zip"),
+            "items": light_items,
+        }
+        yield _sse({"type": "result", "data": payload})
+        log.info(
+            "archive complete @%s dl=%s tx=%s",
+            handle,
+            payload["downloaded"],
+            payload["transcribed"],
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/archive/{handle}/file/{filename}")
+async def api_archive_file(handle: str, filename: str):
+    path = get_archive_file(handle, filename)
+    if not path:
+        raise HTTPException(404, "Fichier introuvable")
+    media = "application/octet-stream"
+    if filename.endswith(".mp4"):
+        media = "video/mp4"
+    elif filename.endswith(".txt"):
+        media = "text/plain; charset=utf-8"
+    elif filename.endswith(".zip"):
+        media = "application/zip"
+    elif filename.endswith(".json"):
+        media = "application/json"
+    return FileResponse(
+        path,
+        media_type=media,
+        filename=filename,
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

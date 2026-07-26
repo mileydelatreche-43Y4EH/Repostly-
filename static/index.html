@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=27" />
+  <link rel="stylesheet" href="/static/style.css?v=28" />
 </head>
 <body>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Passer en mode sombre" title="Thème">
@@ -50,11 +50,20 @@
         <p class="brand">Repostly</p>
         <h1>Le profil avant<br />le premier message.</h1>
         <p class="sub">
-          Analyse ce qu’une personne poste et reposte pour comprendre ses goûts et couleurs.
+          Analyse les reposts, ou télécharge les vidéos postées et extrais le texte parlé.
         </p>
       </header>
 
       <section class="panel">
+        <div class="mode-switch" role="tablist" aria-label="Objectif">
+          <button type="button" class="mode-btn active" data-mode="reposts" role="tab" aria-selected="true">
+            Analyser les reposts
+          </button>
+          <button type="button" class="mode-btn" data-mode="archive" role="tab" aria-selected="false">
+            Télécharger &amp; transcrire
+          </button>
+        </div>
+
         <form id="form" class="form">
           <label class="field">
             <span class="field-label">Profil TikTok</span>
@@ -69,7 +78,7 @@
             />
           </label>
 
-          <div class="row">
+          <div id="opts-reposts" class="row">
             <label class="field field-sm">
               <span class="field-label">Reposts à analyser</span>
               <select id="max">
@@ -82,6 +91,30 @@
             <button type="submit" id="go" class="btn-primary">
               <span class="btn-label">Analyser le profil</span>
             </button>
+          </div>
+
+          <div id="opts-archive" class="archive-opts hidden">
+            <div class="row">
+              <label class="field field-sm">
+                <span class="field-label">Vidéos à récupérer</span>
+                <select id="max-videos">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+              <button type="submit" id="go-archive" class="btn-primary">
+                <span class="btn-label">Télécharger &amp; transcrire</span>
+              </button>
+            </div>
+            <label class="check-row">
+              <input type="checkbox" id="transcribe" checked />
+              <span>Transcrire la parole (Whisper ≈ 0,006&nbsp;$/min — clé OPENAI_API_KEY)</span>
+            </label>
+            <p class="hint">
+              Sur Render Free : max 20 vidéos. En local tu peux monter à 50–100.
+            </p>
           </div>
         </form>
         <p id="status" class="status" aria-live="polite"></p>
@@ -203,8 +236,32 @@
         </article>
       </div>
     </section>
+
+    <!-- ARCHIVE RESULTS -->
+    <section id="view-archive" class="view view-results hidden">
+      <button type="button" id="back-home-archive" class="btn-ghost">← Nouveau scan</button>
+
+      <header class="result-hero">
+        <img id="arch-avatar" class="res-avatar hidden" alt="" />
+        <div id="arch-fallback" class="res-fallback">@</div>
+        <div class="result-hero-text">
+          <h1 id="arch-nick" class="res-nick">—</h1>
+          <a id="arch-handle" class="res-handle" href="#" target="_blank" rel="noopener noreferrer">@</a>
+          <div class="meta-row">
+            <span id="arch-count" class="pill soft"></span>
+            <span id="arch-tx" class="pill soft"></span>
+            <span id="arch-whisper" class="pill soft hidden"></span>
+          </div>
+          <p class="arch-actions">
+            <a id="arch-zip" class="btn-primary btn-inline hidden" href="#">Télécharger le ZIP</a>
+          </p>
+        </div>
+      </header>
+
+      <div id="arch-list" class="arch-list"></div>
+    </section>
   </main>
 
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

@@ -131,6 +131,43 @@ def _normalize_item(item: dict[str, Any], *, kind: str) -> dict[str, Any] | None
     if not caption and not hashtags and not music and not author and not cover:
         return None
 
+    spoken = ""
+    if kind == "post":
+        # Captions auto TikTok (gratuit) — extrait léger sans garder tout le JSON
+        try:
+            bits: list[str] = []
+
+            def _pull(obj: Any, depth: int = 0) -> None:
+                if depth > 6 or obj is None or len(bits) > 40:
+                    return
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        kl = str(k).lower()
+                        if kl in ("text", "utterance") and isinstance(v, str):
+                            t = v.strip()
+                            if 2 < len(t) < 400:
+                                bits.append(t)
+                        elif "caption" in kl or "subtitle" in kl or kl == "cla":
+                            _pull(v, depth + 1)
+                elif isinstance(obj, list):
+                    for x in obj[:40]:
+                        _pull(x, depth + 1)
+
+            video = raw.get("video") if isinstance(raw.get("video"), dict) else {}
+            _pull(video.get("cla") or video.get("subtitleInfos") or video.get("captionInfos"))
+            _pull(raw.get("stickersOnItem"))
+            # dédup
+            seen_b: set[str] = set()
+            clean: list[str] = []
+            for b in bits:
+                k = b.lower()
+                if k not in seen_b:
+                    seen_b.add(k)
+                    clean.append(b)
+            spoken = "\n".join(clean).strip()[:4000]
+        except Exception:
+            spoken = ""
+
     return {
         "kind": kind,
         "caption": caption[:500],
@@ -143,6 +180,7 @@ def _normalize_item(item: dict[str, Any], *, kind: str) -> dict[str, Any] | None
         "likes": _int(likes),
         "id": str(video_id),
         "create_time": create_time,
+        "spoken_hints": spoken,
     }
 
 
@@ -1095,3 +1133,140 @@ def fetch_reposts(
     )
     items = reposts or posts
     return handle, items, profile
+
+
+def fetch_user_posts(
+    profile_url: str,
+    *,
+    max_items: int = 20,
+    headless: bool = True,
+    on_profile=None,
+    on_progress=None,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """Collecte uniquement les vidéos postées par le compte (onglet Videos)."""
+    handle = extract_handle(profile_url)
+    if max_items not in (10, 20, 50, 100):
+        max_items = 20
+
+    light = os.getenv("SCRAPE_LIGHT", "1").strip() not in ("0", "false", "False")
+    if light and max_items > 20:
+        max_items = 20
+
+    base = f"https://www.tiktok.com/@{handle}"
+
+    def progress(msg: str) -> None:
+        if on_progress:
+            try:
+                on_progress(msg)
+            except Exception:
+                pass
+
+    p, browser, context = _browser_context(headless)
+    try:
+        page = context.new_page()
+        progress("Ouverture du profil…")
+        page.goto(base, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1400)
+        _dismiss_cookies(page)
+        page.wait_for_timeout(400)
+
+        profile = _extract_profile_from_page(page, handle, encode_avatar=True)
+        if on_profile:
+            try:
+                on_profile(dict(profile))
+            except Exception:
+                pass
+
+        early: list[dict[str, Any]] = []
+        early_seen: set[str] = set()
+        early_url = ""
+        api_total = 0
+
+        def _capture(response) -> None:
+            nonlocal early_url, api_total
+            try:
+                if response.status != 200:
+                    return
+                if not _api_url_matches(response.url, "/api/post/item_list"):
+                    return
+                if not early_url:
+                    early_url = response.url
+                data = response.json()
+                tot = data.get("total") or data.get("totalCount") or data.get("total_count")
+                if tot:
+                    api_total = max(api_total, _int(tot))
+                for raw in _items_from_payload(data):
+                    norm = _normalize_item(raw, kind="post")
+                    if not norm:
+                        continue
+                    vid = norm.get("id") or ""
+                    if vid and vid in early_seen:
+                        continue
+                    if vid:
+                        early_seen.add(vid)
+                    early.append(norm)
+            except Exception:
+                pass
+
+        page.on("response", _capture)
+
+        progress("Ouverture des vidéos postées…")
+        if not _click_tab(page, ("Videos", "Vidéos", "Posts")):
+            page.goto(base, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1600)
+        try:
+            page.wait_for_response(
+                lambda r: _api_url_matches(r.url, "/api/post/item_list") and r.status == 200,
+                timeout=8000,
+            )
+        except Exception:
+            pass
+
+        progress(f"Collecte des posts (cible {max_items})…")
+        posts = _collect_from_api(
+            page,
+            api_substr="/api/post/item_list",
+            kind="post",
+            max_items=max_items,
+            seed_items=list(early),
+            seed_url=early_url,
+        )
+
+        if len(posts) < 3:
+            for src in (
+                _extract_embedded_items(page, kind="post"),
+                _extract_dom_items(page, kind="post"),
+            ):
+                seen = {str(x.get("id") or "") for x in posts if x.get("id")}
+                for item in src:
+                    vid = str(item.get("id") or "")
+                    if vid and vid in seen:
+                        continue
+                    if vid:
+                        seen.add(vid)
+                    posts.append(item)
+                if len(posts) >= max_items:
+                    break
+            posts = posts[:max_items]
+
+        try:
+            page.remove_listener("response", _capture)
+        except Exception:
+            pass
+
+        if api_total > int(profile.get("video_count") or 0):
+            profile["video_count"] = api_total
+        if not posts:
+            raise RuntimeError(
+                "Aucune vidéo postée trouvée. Profil privé, onglet Videos masqué, "
+                "ou TikTok a bloqué le navigateur."
+            )
+
+        profile["posts_scraped"] = len(posts)
+        profile["posts_requested"] = max_items
+        progress(f"{len(posts)} posts récupérés…")
+        return handle, posts, profile
+    finally:
+        context.close()
+        browser.close()
+        p.stop()

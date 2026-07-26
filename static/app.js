@@ -6,13 +6,21 @@
   const form = document.getElementById("form");
   const profile = document.getElementById("profile");
   const maxEl = document.getElementById("max");
+  const maxVideosEl = document.getElementById("max-videos");
+  const transcribeEl = document.getElementById("transcribe");
   const go = document.getElementById("go");
+  const goArchive = document.getElementById("go-archive");
   const status = document.getElementById("status");
   const themeToggle = document.getElementById("theme-toggle");
+  const optsReposts = document.getElementById("opts-reposts");
+  const optsArchive = document.getElementById("opts-archive");
 
   const viewHome = document.getElementById("view-home");
   const viewScan = document.getElementById("view-scan");
   const viewResults = document.getElementById("view-results");
+  const viewArchive = document.getElementById("view-archive");
+
+  let currentMode = "reposts";
 
   const scanAvatar = document.getElementById("scan-avatar");
   const scanFallback = document.getElementById("scan-fallback");
@@ -54,8 +62,25 @@
     viewHome.classList.toggle("hidden", name !== "home");
     viewScan.classList.toggle("hidden", name !== "scan");
     viewResults.classList.toggle("hidden", name !== "results");
+    viewArchive.classList.toggle("hidden", name !== "archive");
     if (name === "home") void renderRecent();
   }
+
+  function setMode(mode) {
+    currentMode = mode === "archive" ? "archive" : "reposts";
+    document.querySelectorAll(".mode-btn").forEach((btn) => {
+      const on = btn.dataset.mode === currentMode;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    optsReposts.classList.toggle("hidden", currentMode !== "reposts");
+    optsArchive.classList.toggle("hidden", currentMode !== "archive");
+    setStatus("");
+  }
+
+  document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setMode(btn.dataset.mode));
+  });
 
   function setStatus(msg, kind = "") {
     status.textContent = msg;
@@ -685,6 +710,185 @@
     showView("home");
     setStatus("");
   });
+  document.getElementById("back-home-archive").addEventListener("click", () => {
+    showView("home");
+    setStatus("");
+  });
+
+  function renderArchive(data) {
+    const p = data.profile || {};
+    const handle = data.handle || "";
+    const letter = p.nickname || handle;
+    const avatar =
+      p.avatar ||
+      (p.avatar_url ? `/api/avatar?u=${encodeURIComponent(p.avatar_url)}` : "");
+    setAvatar(
+      document.getElementById("arch-avatar"),
+      document.getElementById("arch-fallback"),
+      avatar,
+      letter,
+    );
+    document.getElementById("arch-nick").textContent = p.nickname || handle || "—";
+    const hEl = document.getElementById("arch-handle");
+    hEl.textContent = `@${handle}`;
+    hEl.href = `https://www.tiktok.com/@${handle}`;
+
+    const dl = Number(data.downloaded || 0);
+    const tx = Number(data.transcribed || 0);
+    const req = Number(data.requested || 0);
+    document.getElementById("arch-count").textContent =
+      `${dl} vidéo${dl === 1 ? "" : "s"} téléchargée${dl === 1 ? "" : "s"}` +
+      (req ? ` / ${req}` : "");
+    document.getElementById("arch-tx").textContent =
+      `${tx} transcript${tx === 1 ? "" : "s"}`;
+    const w = document.getElementById("arch-whisper");
+    if (data.whisper_enabled) {
+      w.textContent = "Whisper ON";
+      w.classList.remove("hidden");
+    } else {
+      w.classList.add("hidden");
+    }
+
+    const zip = document.getElementById("arch-zip");
+    if (data.zip) {
+      zip.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(data.zip)}`;
+      zip.classList.remove("hidden");
+    } else {
+      zip.classList.add("hidden");
+    }
+
+    const list = document.getElementById("arch-list");
+    list.innerHTML = "";
+    (data.items || []).forEach((it, idx) => {
+      const row = document.createElement("article");
+      row.className = "arch-item";
+
+      if (it.cover) {
+        const img = document.createElement("img");
+        img.className = "arch-cover";
+        img.alt = "";
+        img.src = it.cover.startsWith("http")
+          ? `/api/avatar?u=${encodeURIComponent(it.cover)}`
+          : it.cover;
+        img.onerror = () => {
+          const ph = document.createElement("div");
+          ph.className = "arch-cover placeholder";
+          ph.textContent = `#${idx + 1}`;
+          img.replaceWith(ph);
+        };
+        row.appendChild(img);
+      } else {
+        const ph = document.createElement("div");
+        ph.className = "arch-cover placeholder";
+        ph.textContent = `#${idx + 1}`;
+        row.appendChild(ph);
+      }
+
+      const body = document.createElement("div");
+      const title = document.createElement("h3");
+      title.textContent = (it.caption || `Vidéo ${idx + 1}`).slice(0, 90);
+      body.appendChild(title);
+
+      const meta = document.createElement("div");
+      meta.className = "arch-meta";
+      const src = it.transcript_source || "";
+      if (src) {
+        const pill = document.createElement("span");
+        pill.className = "pill soft";
+        pill.textContent =
+          src === "whisper"
+            ? "parole (Whisper)"
+            : src === "tiktok_captions"
+              ? "captions TikTok"
+              : "description";
+        meta.appendChild(pill);
+      }
+      if (it.file) {
+        const ok = document.createElement("span");
+        ok.className = "pill soft";
+        ok.textContent = "MP4 OK";
+        meta.appendChild(ok);
+      }
+      body.appendChild(meta);
+
+      const txEl = document.createElement("p");
+      txEl.className = "arch-transcript";
+      txEl.textContent = it.transcript || "Aucun texte extrait.";
+      body.appendChild(txEl);
+
+      const links = document.createElement("div");
+      links.className = "arch-links";
+      if (it.file) {
+        const a = document.createElement("a");
+        a.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(it.file)}`;
+        a.textContent = "Télécharger MP4";
+        a.download = it.file;
+        links.appendChild(a);
+      }
+      if (it.transcript) {
+        const a = document.createElement("a");
+        a.href = `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(it.id + ".txt")}`;
+        a.textContent = "Fichier texte";
+        a.download = `${it.id}.txt`;
+        links.appendChild(a);
+      }
+      if (it.url) {
+        const a = document.createElement("a");
+        a.href = it.url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = "Voir sur TikTok";
+        links.appendChild(a);
+      }
+      body.appendChild(links);
+
+      if (it.error) {
+        const err = document.createElement("p");
+        err.className = "arch-err";
+        err.textContent = it.error;
+        body.appendChild(err);
+      }
+
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+
+    showView("archive");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function readSse(res, onEvent) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalData = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+      for (const chunk of chunks) {
+        const line = chunk
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let ev;
+        try {
+          ev = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (ev.type === "result" && ev.data) finalData = ev.data;
+        if (ev.type === "error") {
+          throw new Error(ev.detail || "Erreur");
+        }
+        onEvent(ev);
+      }
+    }
+    return finalData;
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -693,89 +897,78 @@
 
     const { url, handle } = parseHandle(raw);
     go.disabled = true;
+    if (goArchive) goArchive.disabled = true;
     setStatus("");
     startScanUI(handle);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+    const timeout = setTimeout(() => controller.abort(), 45 * 60 * 1000);
+    const isArchive = currentMode === "archive";
 
     try {
-      // 1 seul appel stream : photo dès que possible, puis résultat
-      const res = await fetch("/api/analyze", {
+      const endpoint = isArchive ? "/api/archive" : "/api/analyze";
+      const body = isArchive
+        ? {
+            profile: url,
+            max_videos: Number(maxVideosEl.value),
+            transcribe: Boolean(transcribeEl.checked),
+          }
+        : {
+            profile: url,
+            max_reposts: Number(maxEl.value),
+          };
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         signal: controller.signal,
-        body: JSON.stringify({
-          profile: url,
-          max_reposts: Number(maxEl.value),
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         throw new Error(apiError(errBody));
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let finalData = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() || "";
-
-        for (const chunk of chunks) {
-          const line = chunk
-            .split("\n")
-            .map((l) => l.trim())
-            .find((l) => l.startsWith("data:"));
-          if (!line) continue;
-          let ev;
-          try {
-            ev = JSON.parse(line.slice(5).trim());
-          } catch {
-            continue;
-          }
-          if (ev.type === "profile" && ev.data) {
-            liveSteps = true;
-            applyQuickProfile(ev.data, handle);
-            scanStep.textContent = "Profil trouvé — analyse…";
-          } else if (ev.type === "progress" && ev.message) {
-            liveSteps = true;
-            scanStep.textContent = ev.message;
-          } else if (ev.type === "error") {
-            throw new Error(ev.detail || "Erreur analyse");
-          } else if (ev.type === "result" && ev.data) {
-            finalData = ev.data;
-          }
+      const finalData = await readSse(res, (ev) => {
+        if (ev.type === "profile" && ev.data) {
+          liveSteps = true;
+          applyQuickProfile(ev.data, handle);
+          scanStep.textContent = isArchive
+            ? "Profil trouvé — téléchargement…"
+            : "Profil trouvé — analyse…";
+        } else if (ev.type === "progress" && ev.message) {
+          liveSteps = true;
+          scanStep.textContent = ev.message;
         }
-      }
+      });
 
-      if (!finalData) throw new Error("Analyse interrompue — réessaie.");
+      if (!finalData) throw new Error("Traitement interrompu — réessaie.");
 
       applyQuickProfile(finalData.profile || {}, handle);
-      scanStep.textContent = "Portrait prêt";
+      scanStep.textContent = isArchive ? "Archive prête" : "Portrait prêt";
       await new Promise((r) => setTimeout(r, 350));
 
       stopScanUI();
-      await saveRecent(finalData);
-      render(finalData);
+      if (!isArchive) {
+        await saveRecent(finalData);
+        render(finalData);
+      } else {
+        renderArchive(finalData);
+      }
     } catch (err) {
       stopScanUI();
       showView("home");
       const msg =
         err.name === "AbortError"
-          ? "Timeout — réduis le nombre de reposts."
+          ? "Timeout — réduis le nombre de vidéos / reposts."
           : /fetch|network|load failed|erreur serveur/i.test(String(err.message || ""))
-            ? "Connexion coupée (souvent manque de RAM sur Render Free). Réessaie avec 100, ou utilise le plan Starter."
+            ? "Connexion coupée (souvent manque de RAM sur Render Free). Réessaie avec moins d’items."
             : err.message || "Erreur";
       setStatus(msg, "error");
     } finally {
       clearTimeout(timeout);
       go.disabled = false;
+      if (goArchive) goArchive.disabled = false;
     }
   });
 
