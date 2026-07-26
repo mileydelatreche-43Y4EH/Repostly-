@@ -811,12 +811,7 @@
     }
 
     const folder = document.getElementById("arch-folder");
-    if (data.out_dir) {
-      folder.textContent = `Dossier : ${data.out_dir}`;
-      folder.classList.remove("hidden");
-    } else {
-      folder.classList.add("hidden");
-    }
+    if (folder) folder.classList.add("hidden");
 
     const fileUrl = (name) =>
       `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(name)}`;
