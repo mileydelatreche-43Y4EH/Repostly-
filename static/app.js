@@ -820,6 +820,15 @@
     setStatus("");
   });
 
+  const mobileBackHome = document.getElementById("mobile-back-home");
+  if (mobileBackHome) {
+    mobileBackHome.addEventListener("click", () => {
+      showView("home");
+      setStatus("");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
   function highlightKeyword(text, keyword = "cheaterbuster") {
     const raw = String(text || "");
     if (!raw) return document.createTextNode("Aucun texte extrait.");
