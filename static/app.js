@@ -62,6 +62,20 @@
     viewScan.classList.toggle("hidden", name !== "scan");
     viewResults.classList.toggle("hidden", name !== "results");
     viewArchive.classList.toggle("hidden", name !== "archive");
+
+    const onResultPage = name === "results" || name === "archive";
+    document.body.classList.toggle("is-result-page", onResultPage);
+
+    const mobileFooter = document.getElementById("mobile-result-footer");
+    const mobileBack = document.getElementById("mobile-back-home");
+    if (mobileFooter) {
+      mobileFooter.classList.toggle("hidden", !onResultPage);
+      mobileFooter.setAttribute("aria-hidden", onResultPage ? "false" : "true");
+    }
+    if (mobileBack) {
+      mobileBack.textContent = name === "archive" ? "Nouveau scan" : "Nouvelle analyse";
+    }
+
     if (name === "home") void renderRecent();
   }
 
