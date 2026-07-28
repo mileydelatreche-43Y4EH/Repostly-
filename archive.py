@@ -51,6 +51,123 @@ def archive_dir(handle: str) -> Path:
     return d
 
 
+def _load_manifest(out_dir: Path) -> dict[str, Any] | None:
+    path = out_dir / "manifest.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _existing_items_map(manifest: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    if not manifest:
+        return out
+    for it in manifest.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        vid = str(it.get("id") or "").strip()
+        if vid:
+            out[vid] = dict(it)
+    return out
+
+
+def _compute_list_target(max_videos: int, existing_count: int) -> int:
+    """Cible cumulative : 100 puis 500 → 500 ; 100 puis 100 → 200."""
+    if max_videos == 0:
+        return 0
+    if existing_count <= 0:
+        return max_videos
+    if max_videos > existing_count:
+        return max_videos
+    return existing_count + max_videos
+
+
+def _write_manifest_bundle(
+    out_dir: Path,
+    handle: str,
+    profile_data: dict[str, Any],
+    items_out: list[dict[str, Any]],
+    *,
+    max_videos: int,
+    list_target: int,
+    light: bool,
+    on_progress: ProgressCb | None,
+    resumed: bool = False,
+    added: int = 0,
+    complete: bool = False,
+    skipped: bool = False,
+) -> dict[str, Any]:
+    items_out.sort(key=lambda x: (not x.get("has_keyword"),))
+
+    all_text = "\n\n———\n\n".join(
+        f"[{i}] {it.get('caption') or it.get('id')}\n{it.get('transcript') or ''}".strip()
+        for i, it in enumerate(items_out, start=1)
+        if it.get("transcript")
+    )
+    if all_text:
+        (out_dir / "all_transcripts.txt").write_text(all_text, encoding="utf-8")
+
+    kw_only = "\n\n———\n\n".join(
+        f"[{it.get('id')}]\n{it.get('transcript') or ''}".strip()
+        for it in items_out
+        if it.get("has_keyword")
+    )
+    if kw_only:
+        (out_dir / "cheaterbuster_only.txt").write_text(kw_only, encoding="utf-8")
+
+    kw_count = sum(1 for x in items_out if x.get("has_keyword"))
+    manifest = {
+        "handle": handle,
+        "profile": profile_data,
+        "requested": max_videos,
+        "list_target": list_target,
+        "found": len(items_out),
+        "downloaded": sum(1 for x in items_out if x.get("file")),
+        "transcribed": sum(1 for x in items_out if x.get("transcript")),
+        "keyword": KEYWORD,
+        "keyword_hits": kw_count,
+        "local_mode": not light,
+        "complete": complete,
+        "resumed": resumed,
+        "added": added,
+        "skipped": skipped,
+        "items": items_out,
+        "all_transcripts": "all_transcripts.txt" if all_text else "",
+        "keyword_file": "cheaterbuster_only.txt" if kw_only else "",
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    if not skipped:
+        _progress(on_progress, f"Création du ZIP… ({kw_count}× {KEYWORD})")
+    zip_path = out_dir / f"{_safe_handle(handle)}_archive.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in out_dir.iterdir():
+            if p.name == zip_path.name:
+                continue
+            if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv", ".vtt"):
+                if ".browser.mp4" in p.name.lower() or ".h264." in p.name.lower():
+                    continue
+                zf.write(p, arcname=p.name)
+
+    manifest["zip"] = zip_path.name
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if skipped:
+        _progress(on_progress, f"Déjà à jour — {len(items_out)} vidéos archivées.")
+    else:
+        _progress(on_progress, "Archive prête")
+    return manifest
+
+
 def _progress(cb: ProgressCb | None, msg: str) -> None:
     if cb:
         try:
@@ -426,7 +543,44 @@ def run_archive(
         max_videos = 20
 
     label = "toutes" if max_videos == 0 else str(max_videos)
-    _progress(on_progress, f"Profil @{handle}…")
+    out_dir = archive_dir(handle)
+    existing_manifest = _load_manifest(out_dir)
+    existing_map = _existing_items_map(existing_manifest)
+    existing_count = len(existing_map)
+    prev_requested = existing_manifest.get("requested") if existing_manifest else None
+
+    if existing_count > 0 and prev_requested == 0:
+        items = list(existing_map.values())
+        _progress(
+            on_progress,
+            f"Compte déjà entièrement archivé ({existing_count} vidéos) — ouverture…",
+        )
+        profile_data = dict(existing_manifest.get("profile") or {})
+        profile_data.setdefault("handle", handle)
+        return _write_manifest_bundle(
+            out_dir,
+            handle,
+            profile_data,
+            items,
+            max_videos=max_videos,
+            list_target=0,
+            light=light,
+            on_progress=on_progress,
+            resumed=True,
+            added=0,
+            complete=True,
+            skipped=True,
+        )
+
+    list_target = _compute_list_target(max_videos, existing_count)
+    if existing_count > 0:
+        tgt_label = "toutes" if list_target == 0 else str(list_target)
+        _progress(
+            on_progress,
+            f"Reprise @{handle} — {existing_count} déjà archivées, cible {tgt_label}…",
+        )
+    else:
+        _progress(on_progress, f"Profil @{handle}…")
     posts: list[dict[str, Any]] = []
     profile_data: dict[str, Any] = {"handle": handle, "nickname": handle}
     list_err = ""
@@ -456,10 +610,11 @@ def run_archive(
     except Exception as e:
         _progress(on_progress, f"Profil partiel… ({e})")
 
-    _progress(on_progress, f"Liste des vidéos @{handle} (cible {label})…")
+    list_label = "toutes" if list_target == 0 else str(list_target)
+    _progress(on_progress, f"Liste des vidéos @{handle} (cible {list_label})…")
 
     try:
-        posts, listed_profile = list_posts_ytdlp(handle, max_items=max_videos)
+        posts, listed_profile = list_posts_ytdlp(handle, max_items=list_target)
         # garder bio/photo déjà lus ; compléter le reste
         if isinstance(listed_profile, dict):
             if listed_profile.get("nickname") and not profile_data.get("nickname"):
@@ -478,7 +633,7 @@ def run_archive(
             pass
 
     if not posts:
-        fb_max = 100 if max_videos == 0 else max_videos
+        fb_max = list_target if list_target > 0 else 100
         if fb_max not in (10, 20, 50, 100, 250, 500):
             fb_max = 100
         try:
@@ -506,9 +661,43 @@ def run_archive(
             "(TikTok a peut‑être limité la requête)."
         )
 
-    out_dir = archive_dir(handle)
+    new_posts = [p for p in posts if str(p.get("id") or "") not in existing_map]
+    account_total = len(posts)
+    if existing_count > 0 and not new_posts:
+        listed_ids = {str(p.get("id") or "") for p in posts}
+        items = list(existing_map.values())
+        for vid, old in existing_map.items():
+            if vid not in listed_ids:
+                items.append(old)
+        complete = max_videos == 0 or account_total <= existing_count
+        _progress(
+            on_progress,
+            f"Déjà à jour — {existing_count} vidéos, rien de nouveau à ajouter.",
+        )
+        return _write_manifest_bundle(
+            out_dir,
+            handle,
+            profile_data,
+            items,
+            max_videos=max_videos,
+            list_target=list_target,
+            light=light,
+            on_progress=on_progress,
+            resumed=True,
+            added=0,
+            complete=complete,
+            skipped=True,
+        )
+
     total = len(posts)
-    workers = 1 if light else min(3, max(1, total))
+    to_fetch = len(new_posts)
+    if existing_count > 0:
+        _progress(
+            on_progress,
+            f"{to_fetch} nouvelle(s) vidéo(s) à récupérer ({existing_count} déjà là)…",
+        )
+
+    workers = 1 if light else min(3, max(1, to_fetch or 1))
     download_map: dict[str, tuple[Path | None, str, str]] = {}
 
     def _job(post: dict[str, Any], idx: int) -> tuple[str, Path | None, str, str]:
@@ -531,30 +720,44 @@ def run_archive(
             downloaded = None
         return vid, downloaded, spoken, err
 
-    _progress(on_progress, f"Téléchargement + paroles {total} vidéos…")
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_job, post, i): (i, post)
-            for i, post in enumerate(posts, start=1)
-        }
-        done_n = 0
-        for fut in as_completed(futures):
-            i, post = futures[fut]
-            vid, downloaded, spoken, err = fut.result()
-            download_map[vid] = (downloaded, spoken, err)
-            done_n += 1
-            _progress(on_progress, f"Téléchargement {done_n}/{total}…")
+    if to_fetch > 0:
+        _progress(on_progress, f"Téléchargement + paroles {to_fetch} vidéos…")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_job, post, i): (i, post)
+                for i, post in enumerate(new_posts, start=1)
+            }
+            done_n = 0
+            for fut in as_completed(futures):
+                i, post = futures[fut]
+                vid, downloaded, spoken, err = fut.result()
+                download_map[vid] = (downloaded, spoken, err)
+                done_n += 1
+                _progress(on_progress, f"Téléchargement {done_n}/{to_fetch}…")
 
     items_out: list[dict[str, Any]] = []
+    listed_ids: set[str] = set()
     for i, post in enumerate(posts, start=1):
         vid = str(post.get("id") or f"idx{i}")
+        listed_ids.add(vid)
         url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
         caption = (post.get("caption") or "").strip()
+
+        if vid in existing_map and vid not in download_map:
+            meta = dict(existing_map[vid])
+            meta["url"] = url
+            meta["caption"] = caption or meta.get("caption") or ""
+            meta["cover"] = post.get("cover") or meta.get("cover") or ""
+            meta["plays"] = post.get("plays") or meta.get("plays") or 0
+            meta["likes"] = post.get("likes") or meta.get("likes") or 0
+            meta["create_time"] = post.get("create_time") or meta.get("create_time") or 0
+            items_out.append(meta)
+            continue
+
         downloaded, spoken, err = download_map.get(vid, (None, "", "manquant"))
         transcript_path = out_dir / f"{vid}.txt"
         meta_path = out_dir / f"{vid}.json"
 
-        # Paroles (sous-titres) en priorité, sinon caption
         if spoken:
             transcript = spoken
             source = "subtitles"
@@ -594,64 +797,28 @@ def run_archive(
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         items_out.append(meta)
 
-    # Hits keyword d'abord
-    items_out.sort(key=lambda x: (not x.get("has_keyword"),))
+    for vid, old in existing_map.items():
+        if vid not in listed_ids:
+            items_out.append(old)
 
-    all_text = "\n\n———\n\n".join(
-        f"[{i}] {it.get('caption') or it.get('id')}\n{it.get('transcript') or ''}".strip()
-        for i, it in enumerate(items_out, start=1)
-        if it.get("transcript")
+    added = to_fetch
+    complete = max_videos == 0 or (
+        len(items_out) >= list_target if list_target > 0 else account_total <= len(items_out)
     )
-    if all_text:
-        (out_dir / "all_transcripts.txt").write_text(all_text, encoding="utf-8")
-
-    kw_only = "\n\n———\n\n".join(
-        f"[{it.get('id')}]\n{it.get('transcript') or ''}".strip()
-        for it in items_out
-        if it.get("has_keyword")
+    return _write_manifest_bundle(
+        out_dir,
+        handle,
+        profile_data,
+        items_out,
+        max_videos=max_videos,
+        list_target=list_target,
+        light=light,
+        on_progress=on_progress,
+        resumed=existing_count > 0,
+        added=added,
+        complete=complete,
+        skipped=False,
     )
-    if kw_only:
-        (out_dir / "cheaterbuster_only.txt").write_text(kw_only, encoding="utf-8")
-
-    kw_count = sum(1 for x in items_out if x.get("has_keyword"))
-    manifest = {
-        "handle": handle,
-        "profile": profile_data,
-        "requested": max_videos,
-        "found": total,
-        "downloaded": sum(1 for x in items_out if x.get("file")),
-        "transcribed": sum(1 for x in items_out if x.get("transcript")),
-        "keyword": KEYWORD,
-        "keyword_hits": kw_count,
-        "local_mode": not light,
-        "out_dir": str(out_dir),
-        "items": items_out,
-        "all_transcripts": "all_transcripts.txt" if all_text else "",
-        "keyword_file": "cheaterbuster_only.txt" if kw_only else "",
-    }
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    _progress(on_progress, f"Création du ZIP… ({kw_count}× {KEYWORD})")
-    zip_path = out_dir / f"{_safe_handle(handle)}_archive.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for p in out_dir.iterdir():
-            if p.name == zip_path.name:
-                continue
-            if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv", ".vtt"):
-                if ".browser.mp4" in p.name.lower() or ".h264." in p.name.lower():
-                    continue
-                zf.write(p, arcname=p.name)
-
-    manifest["zip"] = zip_path.name
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    _progress(on_progress, "Archive prête")
-    return manifest
 
 
 def get_archive_file(handle: str, filename: str) -> Path | None:

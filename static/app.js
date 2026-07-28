@@ -896,8 +896,11 @@
 
     const dl = Number(data.downloaded || items.length || 0);
     const n = items.length || dl;
-    document.getElementById("arch-count").textContent =
-      `${n} vidéo${n === 1 ? "" : "s"}`;
+    let countText = `${n} vidéo${n === 1 ? "" : "s"}`;
+    const added = Number(data.added || 0);
+    if (added > 0) countText += ` (+${added} ajoutée${added === 1 ? "" : "s"})`;
+    if (data.skipped && data.complete) countText += " · complet";
+    document.getElementById("arch-count").textContent = countText;
 
     const kwEl = document.getElementById("arch-keyword");
     const hits = Number(data.keyword_hits != null ? data.keyword_hits : kwHits.length);
@@ -1318,7 +1321,15 @@
       if (!finalData) throw new Error("Traitement interrompu — réessaie.");
 
       applyQuickProfile(finalData.profile || {}, handle);
-      scanStep.textContent = isArchive ? "Archive prête" : "Portrait prêt";
+      if (finalData.skipped) {
+        scanStep.textContent = finalData.complete
+          ? "Archive déjà complète — ouverture…"
+          : "Archive à jour — ouverture…";
+      } else if (Number(finalData.added || 0) > 0) {
+        scanStep.textContent = `+${finalData.added} vidéo(s) ajoutée(s)…`;
+      } else {
+        scanStep.textContent = isArchive ? "Archive prête" : "Portrait prêt";
+      }
       await new Promise((r) => setTimeout(r, 350));
 
       stopScanUI();
