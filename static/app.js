@@ -1,7 +1,40 @@
 (() => {
-  const RECENT_KEY = "repostly_recent";
-  const RECENT_MAX = 50;
-  const THEME_KEY = "repostly_theme";
+  const DL_KEY = "repostly_downloaded";
+
+  function loadDownloadedSet(handle) {
+    try {
+      const all = JSON.parse(localStorage.getItem(DL_KEY) || "{}");
+      const list = all[String(handle || "").toLowerCase()] || [];
+      return new Set(Array.isArray(list) ? list.map(String) : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function markDownloaded(handle, videoId) {
+    const h = String(handle || "").toLowerCase();
+    const id = String(videoId || "");
+    if (!h || !id) return;
+    try {
+      const all = JSON.parse(localStorage.getItem(DL_KEY) || "{}");
+      const set = new Set(Array.isArray(all[h]) ? all[h].map(String) : []);
+      set.add(id);
+      all[h] = [...set];
+      localStorage.setItem(DL_KEY, JSON.stringify(all));
+    } catch (_) {}
+  }
+
+  function applyDlBtnState(btn, done) {
+    if (done) {
+      btn.classList.add("is-downloaded");
+      btn.textContent = "Telecharge";
+      btn.title = "Deja telecharge";
+    } else {
+      btn.classList.remove("is-downloaded");
+      btn.textContent = "Download";
+      btn.title = "Telecharger la video (qualite max)";
+    }
+  }
 
   const form = document.getElementById("form");
   const profile = document.getElementById("profile");
@@ -913,6 +946,8 @@
     const folder = document.getElementById("arch-folder");
     if (folder) folder.classList.add("hidden");
 
+    const downloaded = loadDownloadedSet(handle);
+
     const fileUrl = (name) =>
       `/api/archive/${encodeURIComponent(handle)}/file/${encodeURIComponent(name)}`;
 
@@ -1158,8 +1193,8 @@
           const dlBtn = document.createElement("button");
           dlBtn.type = "button";
           dlBtn.className = "arch-dl-btn";
-          dlBtn.textContent = "Download";
-          dlBtn.title = "Telecharger la video (qualite max)";
+          const vidKey = String(it.id || it.file || "");
+          applyDlBtnState(dlBtn, downloaded.has(vidKey));
           dlBtn.addEventListener("click", (ev) => {
             ev.preventDefault();
             const a = document.createElement("a");
@@ -1168,6 +1203,9 @@
             document.body.appendChild(a);
             a.click();
             a.remove();
+            markDownloaded(handle, vidKey);
+            downloaded.add(vidKey);
+            applyDlBtnState(dlBtn, true);
           });
           actions.appendChild(dlBtn);
         }

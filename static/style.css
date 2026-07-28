@@ -471,12 +471,22 @@ html.dark .theme-toggle .icon-sun {
   box-shadow: 0 6px 16px rgba(0, 113, 227, 0.25);
   cursor: pointer;
   white-space: nowrap;
-  transition: transform 0.15s ease, filter 0.15s ease;
+  transition: transform 0.15s ease, filter 0.15s ease, background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .arch-dl-btn:hover {
   filter: brightness(1.05);
   transform: scale(1.02);
+}
+
+.arch-dl-btn.is-downloaded {
+  background: linear-gradient(180deg, #34c759 0%, var(--ok) 100%);
+  box-shadow: 0 6px 16px rgba(36, 138, 61, 0.28);
+}
+
+.arch-dl-btn.is-downloaded:hover {
+  filter: brightness(1.05);
 }
 
 .arch-item-actions {
