@@ -1331,12 +1331,19 @@
     } catch (err) {
       stopScanUI();
       showView("home");
-      const msg =
-        err.name === "AbortError"
-          ? "Timeout — réduis le nombre de vidéos / reposts."
-          : /fetch|network|load failed|erreur serveur/i.test(String(err.message || ""))
-            ? "Connexion coupée (souvent manque de RAM sur Render Free). Réessaie avec moins d’items."
-            : err.message || "Erreur";
+      const rawMsg = String(err.message || "");
+      const isLocal =
+        location.hostname === "127.0.0.1" || location.hostname === "localhost";
+      let msg;
+      if (err.name === "AbortError") {
+        msg = "Timeout — réduis le nombre de vidéos (essaie 100 au lieu de Tout).";
+      } else if (/failed to fetch|networkerror|load failed|network/i.test(rawMsg)) {
+        msg = isLocal
+          ? "Serveur local arrêté ou planté — relance lancer.bat, puis réessaie (100 vidéos max recommandé)."
+          : "Connexion coupée. Réessaie avec moins de vidéos (100 au lieu de Tout).";
+      } else {
+        msg = rawMsg || "Erreur";
+      }
       setStatus(msg, "error");
     } finally {
       clearTimeout(timeout);
