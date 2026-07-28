@@ -427,6 +427,61 @@
     } catch (_) {
       rows = [];
     }
+
+    // Reconstruit depuis le disque serveur (survit même si IndexedDB est vide)
+    try {
+      const res = await fetch("/api/archives");
+      if (res.ok) {
+        const payload = await res.json();
+        const disk = Array.isArray(payload.items) ? payload.items : [];
+        const byId = new Map();
+        for (const row of rows) {
+          const id = row.id || recentId(row.mode || "reposts", row.handle);
+          byId.set(id, row);
+        }
+        for (const d of disk) {
+          const handle = String(d.handle || "").toLowerCase();
+          if (!handle) continue;
+          const id = recentId("archive", handle);
+          const existing = byId.get(id);
+          const avatar = d.avatar_url
+            ? `/api/avatar?u=${encodeURIComponent(d.avatar_url)}`
+            : existing?.avatar || "";
+          const entry = {
+            id,
+            mode: "archive",
+            handle,
+            nickname: d.nickname || existing?.nickname || handle,
+            avatar: existing?.avatar || avatar,
+            savedAt: Math.max(Number(d.savedAt) || 0, Number(existing?.savedAt) || 0),
+            hasSnapshot: true,
+            data: existing?.data || {
+              mode: "archive",
+              handle,
+              profile: {
+                handle,
+                nickname: d.nickname || handle,
+                avatar_url: d.avatar_url || "",
+              },
+              downloaded: d.downloaded,
+              keyword_hits: d.keyword_hits,
+              found: d.found,
+              items: [],
+              _fromDisk: true,
+            },
+          };
+          byId.set(id, entry);
+          // Persiste dans IndexedDB pour les prochains refresh
+          try {
+            await idbPut(entry);
+          } catch (_) {}
+        }
+        rows = [...byId.values()];
+      }
+    } catch (_) {
+      /* disque optionnel si serveur down */
+    }
+
     // Ordre stable : plus récent en premier, sans supprimer d'entrées
     rows.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
     if (rows.length > RECENT_MAX) {

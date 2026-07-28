@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from analyze import analyze_profile
-from archive import ensure_browser_mp4, get_archive_file, run_archive
+from archive import ensure_browser_mp4, get_archive_file, list_archive_recents, run_archive
 from tiktok_local import extract_handle, fetch_profile_content, fetch_profile_quick
 
 
@@ -439,6 +439,12 @@ async def api_archive(req: ArchiveRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/api/archives")
+async def api_archives_list():
+    """Archives locales = recherches récentes reconstruites depuis le disque."""
+    return {"items": list_archive_recents()}
 
 
 @app.get("/api/archive/{handle}/snapshot")

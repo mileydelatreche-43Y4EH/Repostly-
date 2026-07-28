@@ -821,6 +821,52 @@ def run_archive(
     )
 
 
+def list_archive_recents(limit: int = 50) -> list[dict[str, Any]]:
+    """Liste les archives locales (manifest.json) pour reconstruire les recherches récentes."""
+    if not ARCHIVES.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for d in ARCHIVES.iterdir():
+        if not d.is_dir():
+            continue
+        path = d / "manifest.json"
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        handle = str(data.get("handle") or d.name).replace("@", "").lower()
+        profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        try:
+            mtime = int(path.stat().st_mtime * 1000)
+        except Exception:
+            mtime = 0
+        avatar_url = str(profile.get("avatar_url") or "")
+        raw_avatar = str(profile.get("avatar") or "")
+        if not avatar_url and raw_avatar.startswith("http"):
+            avatar_url = raw_avatar
+        rows.append(
+            {
+                "id": f"archive:{handle}",
+                "mode": "archive",
+                "handle": handle,
+                "nickname": str(profile.get("nickname") or handle),
+                "avatar_url": avatar_url,
+                "savedAt": mtime,
+                "hasSnapshot": True,
+                "downloaded": int(data.get("downloaded") or len(items) or 0),
+                "keyword_hits": int(data.get("keyword_hits") or 0),
+                "found": int(data.get("found") or len(items) or 0),
+            }
+        )
+    rows.sort(key=lambda x: x.get("savedAt") or 0, reverse=True)
+    return rows[: max(1, min(limit, 100))]
+
+
 def get_archive_file(handle: str, filename: str) -> Path | None:
     safe = _safe_handle(extract_handle(handle) if "@" in handle or "/" in handle else handle)
     name = Path(filename).name
