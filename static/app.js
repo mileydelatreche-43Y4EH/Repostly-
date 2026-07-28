@@ -1,5 +1,8 @@
 (() => {
   const DL_KEY = "repostly_downloaded";
+  const RECENT_KEY = "repostly_recent";
+  const RECENT_MAX = 50;
+  const THEME_KEY = "repostly_theme";
 
   function loadDownloadedSet(handle) {
     try {
