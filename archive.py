@@ -86,6 +86,106 @@ def _compute_list_target(max_videos: int, existing_count: int) -> int:
     return existing_count + max_videos
 
 
+def _flush_manifest_light(
+    out_dir: Path,
+    handle: str,
+    profile_data: dict[str, Any],
+    items_out: list[dict[str, Any]],
+    *,
+    max_videos: int,
+    list_target: int,
+    light: bool,
+    resumed: bool = False,
+    added: int = 0,
+    complete: bool = False,
+    skipped: bool = False,
+    partial: bool = False,
+) -> dict[str, Any]:
+    """Écrit manifest.json sans ZIP (rapide, pour sauver le progrès en cours)."""
+    sorted_items = sorted(items_out, key=lambda x: (not x.get("has_keyword"),))
+    kw_count = sum(1 for x in sorted_items if x.get("has_keyword"))
+    manifest = {
+        "handle": handle,
+        "profile": profile_data,
+        "requested": max_videos,
+        "list_target": list_target,
+        "found": len(sorted_items),
+        "downloaded": sum(1 for x in sorted_items if x.get("file")),
+        "transcribed": sum(1 for x in sorted_items if x.get("transcript")),
+        "keyword": KEYWORD,
+        "keyword_hits": kw_count,
+        "local_mode": not light,
+        "complete": complete,
+        "resumed": resumed,
+        "added": added,
+        "skipped": skipped,
+        "partial": partial,
+        "items": sorted_items,
+        "all_transcripts": "",
+        "keyword_file": "",
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _build_item_meta(
+    *,
+    vid: str,
+    url: str,
+    post: dict[str, Any],
+    handle: str,
+    downloaded: Path | None,
+    spoken: str,
+    err: str,
+    out_dir: Path,
+) -> dict[str, Any]:
+    caption = (post.get("caption") or "").strip()
+    if spoken:
+        transcript = spoken
+        source = "subtitles"
+    elif caption:
+        transcript = caption
+        source = "description"
+    else:
+        transcript = ""
+        source = ""
+
+    if transcript:
+        (out_dir / f"{vid}.txt").write_text(transcript, encoding="utf-8")
+
+    file_name = downloaded.name if downloaded else ""
+    size_bytes = downloaded.stat().st_size if downloaded and downloaded.exists() else 0
+    has_kw = bool(re.search(re.escape(KEYWORD), transcript, re.I)) or bool(
+        re.search(re.escape(KEYWORD), caption, re.I)
+    )
+    meta = {
+        "id": vid,
+        "url": url,
+        "caption": caption,
+        "author": post.get("author") or handle,
+        "music": post.get("music") or "",
+        "hashtags": post.get("hashtags") or [],
+        "cover": post.get("cover") or "",
+        "plays": post.get("plays") or 0,
+        "likes": post.get("likes") or 0,
+        "create_time": post.get("create_time") or 0,
+        "file": file_name,
+        "file_size": size_bytes,
+        "transcript": transcript,
+        "transcript_source": source,
+        "has_keyword": has_kw,
+        "error": err,
+    }
+    (out_dir / f"{vid}.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return meta
+
+
 def _write_manifest_bundle(
     out_dir: Path,
     handle: str,
@@ -100,6 +200,7 @@ def _write_manifest_bundle(
     added: int = 0,
     complete: bool = False,
     skipped: bool = False,
+    partial: bool = False,
 ) -> dict[str, Any]:
     items_out.sort(key=lambda x: (not x.get("has_keyword"),))
 
@@ -135,6 +236,7 @@ def _write_manifest_bundle(
         "resumed": resumed,
         "added": added,
         "skipped": skipped,
+        "partial": partial,
         "items": items_out,
         "all_transcripts": "all_transcripts.txt" if all_text else "",
         "keyword_file": "cheaterbuster_only.txt" if kw_only else "",
@@ -147,22 +249,31 @@ def _write_manifest_bundle(
     if not skipped:
         _progress(on_progress, f"Création du ZIP… ({kw_count}× {KEYWORD})")
     zip_path = out_dir / f"{_safe_handle(handle)}_archive.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for p in out_dir.iterdir():
-            if p.name == zip_path.name:
-                continue
-            if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv", ".vtt"):
-                if ".browser.mp4" in p.name.lower() or ".h264." in p.name.lower():
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for p in out_dir.iterdir():
+                if p.name == zip_path.name:
                     continue
-                zf.write(p, arcname=p.name)
+                if p.suffix.lower() in (".mp4", ".txt", ".json", ".webm", ".mkv", ".vtt"):
+                    if ".browser.mp4" in p.name.lower() or ".h264." in p.name.lower():
+                        continue
+                    zf.write(p, arcname=p.name)
+        manifest["zip"] = zip_path.name
+    except Exception:
+        # ZIP optionnel : le progrès reste dans manifest.json
+        pass
 
-    manifest["zip"] = zip_path.name
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     if skipped:
         _progress(on_progress, f"Déjà à jour — {len(items_out)} vidéos archivées.")
+    elif partial:
+        _progress(
+            on_progress,
+            f"Scan partiel sauvé — {len(items_out)} vidéo(s) disponibles.",
+        )
     else:
         _progress(on_progress, "Archive prête")
     return manifest
@@ -698,9 +809,11 @@ def run_archive(
         )
 
     workers = 1 if light else min(3, max(1, to_fetch or 1))
-    download_map: dict[str, tuple[Path | None, str, str]] = {}
+    # Map cumulatif : existant + nouvelles (sauvé au fur et à mesure)
+    live_map: dict[str, dict[str, Any]] = dict(existing_map)
+    added_n = 0
 
-    def _job(post: dict[str, Any], idx: int) -> tuple[str, Path | None, str, str]:
+    def _job(post: dict[str, Any], idx: int) -> tuple[str, Path | None, str, str, dict[str, Any]]:
         vid = str(post.get("id") or f"idx{idx}")
         url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
         video_path = out_dir / f"{vid}.mp4"
@@ -718,107 +831,168 @@ def run_archive(
         except Exception as e:
             err = str(e)
             downloaded = None
-        return vid, downloaded, spoken, err
+        return vid, downloaded, spoken, err, post
 
-    if to_fetch > 0:
-        _progress(on_progress, f"Téléchargement + paroles {to_fetch} vidéos…")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_job, post, i): (i, post)
-                for i, post in enumerate(new_posts, start=1)
-            }
-            done_n = 0
-            for fut in as_completed(futures):
-                i, post = futures[fut]
-                vid, downloaded, spoken, err = fut.result()
-                download_map[vid] = (downloaded, spoken, err)
-                done_n += 1
-                _progress(on_progress, f"Téléchargement {done_n}/{to_fetch}…")
-
-    items_out: list[dict[str, Any]] = []
-    listed_ids: set[str] = set()
-    for i, post in enumerate(posts, start=1):
-        vid = str(post.get("id") or f"idx{i}")
-        listed_ids.add(vid)
-        url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
-        caption = (post.get("caption") or "").strip()
-
-        if vid in existing_map and vid not in download_map:
-            meta = dict(existing_map[vid])
-            meta["url"] = url
-            meta["caption"] = caption or meta.get("caption") or ""
-            meta["cover"] = post.get("cover") or meta.get("cover") or ""
-            meta["plays"] = post.get("plays") or meta.get("plays") or 0
-            meta["likes"] = post.get("likes") or meta.get("likes") or 0
-            meta["create_time"] = post.get("create_time") or meta.get("create_time") or 0
-            items_out.append(meta)
-            continue
-
-        downloaded, spoken, err = download_map.get(vid, (None, "", "manquant"))
-        transcript_path = out_dir / f"{vid}.txt"
-        meta_path = out_dir / f"{vid}.json"
-
-        if spoken:
-            transcript = spoken
-            source = "subtitles"
-        elif caption:
-            transcript = caption
-            source = "description"
-        else:
-            transcript = ""
-            source = ""
-
-        if transcript:
-            transcript_path.write_text(transcript, encoding="utf-8")
-
-        file_name = downloaded.name if downloaded else ""
-        size_bytes = downloaded.stat().st_size if downloaded and downloaded.exists() else 0
-        has_kw = bool(re.search(re.escape(KEYWORD), transcript, re.I)) or bool(
-            re.search(re.escape(KEYWORD), caption, re.I)
+    def _save_partial(force_zip: bool = False) -> dict[str, Any]:
+        items = list(live_map.values())
+        if force_zip:
+            return _write_manifest_bundle(
+                out_dir,
+                handle,
+                profile_data,
+                items,
+                max_videos=max_videos,
+                list_target=list_target,
+                light=light,
+                on_progress=on_progress,
+                resumed=existing_count > 0,
+                added=added_n,
+                complete=False,
+                skipped=False,
+                partial=True,
+            )
+        return _flush_manifest_light(
+            out_dir,
+            handle,
+            profile_data,
+            items,
+            max_videos=max_videos,
+            list_target=list_target,
+            light=light,
+            resumed=existing_count > 0,
+            added=added_n,
+            complete=False,
+            skipped=False,
+            partial=True,
         )
-        meta = {
-            "id": vid,
-            "url": url,
-            "caption": caption,
-            "author": post.get("author") or handle,
-            "music": post.get("music") or "",
-            "hashtags": post.get("hashtags") or [],
-            "cover": post.get("cover") or "",
-            "plays": post.get("plays") or 0,
-            "likes": post.get("likes") or 0,
-            "create_time": post.get("create_time") or 0,
-            "file": file_name,
-            "file_size": size_bytes,
-            "transcript": transcript,
-            "transcript_source": source,
-            "has_keyword": has_kw,
-            "error": err,
-        }
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        items_out.append(meta)
 
-    for vid, old in existing_map.items():
-        if vid not in listed_ids:
-            items_out.append(old)
+    try:
+        if to_fetch > 0:
+            _progress(on_progress, f"Téléchargement + paroles {to_fetch} vidéos…")
+            # Sauve tout de suite le profil dans les récentes (même avant le 1er MP4)
+            _flush_manifest_light(
+                out_dir,
+                handle,
+                profile_data,
+                list(live_map.values()),
+                max_videos=max_videos,
+                list_target=list_target,
+                light=light,
+                resumed=existing_count > 0,
+                added=0,
+                complete=False,
+                skipped=False,
+                partial=True,
+            )
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_job, post, i): (i, post)
+                    for i, post in enumerate(new_posts, start=1)
+                }
+                done_n = 0
+                for fut in as_completed(futures):
+                    try:
+                        vid, downloaded, spoken, err, post = fut.result()
+                    except Exception as e:
+                        # Une vidéo a planté — on continue avec les autres
+                        i, post = futures[fut]
+                        vid = str(post.get("id") or f"idx{i}")
+                        downloaded, spoken, err = None, "", str(e)
+                    url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
+                    meta = _build_item_meta(
+                        vid=vid,
+                        url=url,
+                        post=post,
+                        handle=handle,
+                        downloaded=downloaded,
+                        spoken=spoken,
+                        err=err,
+                        out_dir=out_dir,
+                    )
+                    live_map[vid] = meta
+                    if meta.get("file"):
+                        added_n += 1
+                    done_n += 1
+                    _progress(on_progress, f"Téléchargement {done_n}/{to_fetch}…")
+                    # Flush disque régulièrement (toutes les 3 vidéos + à la fin)
+                    if done_n == to_fetch or done_n % 3 == 0:
+                        _save_partial(force_zip=False)
 
-    added = to_fetch
-    complete = max_videos == 0 or (
-        len(items_out) >= list_target if list_target > 0 else account_total <= len(items_out)
-    )
-    return _write_manifest_bundle(
-        out_dir,
-        handle,
-        profile_data,
-        items_out,
-        max_videos=max_videos,
-        list_target=list_target,
-        light=light,
-        on_progress=on_progress,
-        resumed=existing_count > 0,
-        added=added,
-        complete=complete,
-        skipped=False,
-    )
+        items_out: list[dict[str, Any]] = []
+        listed_ids: set[str] = set()
+        for i, post in enumerate(posts, start=1):
+            vid = str(post.get("id") or f"idx{i}")
+            listed_ids.add(vid)
+            url = post.get("url") or f"https://www.tiktok.com/@{handle}/video/{vid}"
+            caption = (post.get("caption") or "").strip()
+
+            if vid in live_map:
+                meta = dict(live_map[vid])
+                meta["url"] = url
+                meta["caption"] = caption or meta.get("caption") or ""
+                meta["cover"] = post.get("cover") or meta.get("cover") or ""
+                meta["plays"] = post.get("plays") or meta.get("plays") or 0
+                meta["likes"] = post.get("likes") or meta.get("likes") or 0
+                meta["create_time"] = post.get("create_time") or meta.get("create_time") or 0
+                items_out.append(meta)
+                continue
+
+            # Non téléchargée (ne devrait pas arriver hors crash)
+            items_out.append(
+                {
+                    "id": vid,
+                    "url": url,
+                    "caption": caption,
+                    "author": post.get("author") or handle,
+                    "music": post.get("music") or "",
+                    "hashtags": post.get("hashtags") or [],
+                    "cover": post.get("cover") or "",
+                    "plays": post.get("plays") or 0,
+                    "likes": post.get("likes") or 0,
+                    "create_time": post.get("create_time") or 0,
+                    "file": "",
+                    "file_size": 0,
+                    "transcript": caption,
+                    "transcript_source": "description" if caption else "",
+                    "has_keyword": bool(re.search(re.escape(KEYWORD), caption, re.I)),
+                    "error": "manquant",
+                }
+            )
+
+        for vid, old in existing_map.items():
+            if vid not in listed_ids and vid not in {str(x.get("id")) for x in items_out}:
+                items_out.append(old)
+
+        complete = max_videos == 0 or (
+            len([x for x in items_out if x.get("file")]) >= list_target
+            if list_target > 0
+            else account_total <= len(items_out)
+        )
+        return _write_manifest_bundle(
+            out_dir,
+            handle,
+            profile_data,
+            items_out,
+            max_videos=max_videos,
+            list_target=list_target,
+            light=light,
+            on_progress=on_progress,
+            resumed=existing_count > 0,
+            added=added_n,
+            complete=complete,
+            skipped=False,
+            partial=False,
+        )
+    except Exception as e:
+        # Crash / interruption : on conserve tout ce qui est déjà sur disque
+        n = len(live_map)
+        if n > 0:
+            _progress(
+                on_progress,
+                f"Interrompu après {n} vidéo(s) — sauvegarde du progrès… ({e})",
+            )
+            return _save_partial(force_zip=True)
+        raise
 
 
 def list_archive_recents(limit: int = 50) -> list[dict[str, Any]]:

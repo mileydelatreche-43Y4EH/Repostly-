@@ -354,6 +354,29 @@ async def api_archive(req: ArchiveRequest):
             except Exception as e:
                 box["err"] = e
                 log.exception("archive thread fail @%s", handle)
+                # Si un progrès partiel existe déjà sur disque, on le renvoie
+                try:
+                    from archive import ARCHIVES, _safe_handle
+
+                    path = ARCHIVES / _safe_handle(handle) / "manifest.json"
+                    if path.is_file():
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                        if isinstance(data, dict) and (data.get("items") or data.get("downloaded")):
+                            data["partial"] = True
+                            data["mode"] = "archive"
+                            box["ok"] = data
+                            box.pop("err", None)
+                            emit(
+                                {
+                                    "type": "progress",
+                                    "message": (
+                                        f"Interrompu — "
+                                        f"{len(data.get('items') or [])} vidéo(s) déjà sauvées."
+                                    ),
+                                }
+                            )
+                except Exception:
+                    pass
             finally:
                 emit({"type": "_done"})
 
@@ -418,6 +441,7 @@ async def api_archive(req: ArchiveRequest):
             "resumed": manifest.get("resumed"),
             "added": manifest.get("added"),
             "skipped": manifest.get("skipped"),
+            "partial": manifest.get("partial"),
             "zip": manifest.get("zip"),
             "all_transcripts": manifest.get("all_transcripts"),
             "keyword_file": manifest.get("keyword_file"),

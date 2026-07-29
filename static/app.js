@@ -990,7 +990,8 @@
     let countText = `${n} vidéo${n === 1 ? "" : "s"}`;
     const added = Number(data.added || 0);
     if (added > 0) countText += ` (+${added} ajoutée${added === 1 ? "" : "s"})`;
-    if (data.skipped && data.complete) countText += " · complet";
+    if (data.partial) countText += " · partiel";
+    else if (data.skipped && data.complete) countText += " · complet";
     document.getElementById("arch-count").textContent = countText;
 
     const kwEl = document.getElementById("arch-keyword");
@@ -1417,7 +1418,10 @@
       if (!finalData) throw new Error("Traitement interrompu — réessaie.");
 
       applyQuickProfile(finalData.profile || {}, handle);
-      if (finalData.skipped) {
+      if (finalData.partial) {
+        const n = (finalData.items || []).length || finalData.downloaded || 0;
+        scanStep.textContent = `Scan partiel — ${n} vidéo(s) sauvée(s)`;
+      } else if (finalData.skipped) {
         scanStep.textContent = finalData.complete
           ? "Archive déjà complète — ouverture…"
           : "Archive à jour — ouverture…";
@@ -1432,11 +1436,37 @@
       await saveRecent(finalData);
       if (isArchive || finalData.mode === "archive") {
         renderArchive(finalData);
+        if (finalData.partial) {
+          setStatus(
+            `Scan interrompu — ${(finalData.items || []).length || finalData.downloaded || 0} vidéo(s) déjà disponibles.`,
+            "ok",
+          );
+        }
       } else {
         render(finalData);
       }
     } catch (err) {
       stopScanUI();
+      // Archive : si le flux a planté, on récupère quand même le progrès disque
+      if (isArchive) {
+        try {
+          const res = await fetch(`/api/archive/${encodeURIComponent(handle)}/snapshot`);
+          if (res.ok) {
+            const snap = await res.json();
+            if (snap && ((snap.items || []).length || snap.downloaded)) {
+              snap.mode = "archive";
+              snap.partial = true;
+              await saveRecent(snap);
+              renderArchive(snap);
+              setStatus(
+                `Scan interrompu — ${(snap.items || []).length || snap.downloaded || 0} vidéo(s) sauvée(s). Tu peux continuer plus tard.`,
+                "ok",
+              );
+              return;
+            }
+          }
+        } catch (_) {}
+      }
       showView("home");
       const rawMsg = String(err.message || "");
       const isLocal =
