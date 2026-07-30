@@ -539,11 +539,45 @@ html.dark .theme-toggle .icon-sun {
 }
 
 .arch-caption {
-  margin: 0 0 0.35rem;
+  margin: 0;
   color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.arch-caption.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.arch-bio-box {
+  margin: 0 0 0.15rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  background: var(--input);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.arch-hashtags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.arch-hashtag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--blue);
+  background: var(--blue-soft);
+  border: 1px solid transparent;
 }
 
 .arch-music {

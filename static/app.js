@@ -1233,6 +1233,50 @@
         title.textContent = hit ? `Video ${idx + 1} — cheaterbuster` : `Video ${idx + 1}`;
         body.appendChild(title);
 
+        // Bio / description TikTok + hashtags (section dédiée au-dessus des paroles)
+        const captionRaw = String(it.caption || "").trim();
+        let tags = Array.isArray(it.hashtags)
+          ? it.hashtags.map((h) => String(h || "").replace(/^#/, "").trim()).filter(Boolean)
+          : [];
+        if (!tags.length && captionRaw) {
+          const found = captionRaw.match(/#([\w\u00C0-\u024F]+)/g) || [];
+          tags = found.map((t) => t.replace(/^#/, ""));
+        }
+        // Déduplique
+        tags = [...new Set(tags)];
+
+        const bioLabel = document.createElement("p");
+        bioLabel.className = "arch-transcript-label";
+        bioLabel.textContent = "Bio / description";
+        body.appendChild(bioLabel);
+
+        const bioBox = document.createElement("div");
+        bioBox.className = "arch-bio-box";
+
+        const capEl = document.createElement("p");
+        capEl.className = "arch-caption";
+        if (captionRaw) {
+          capEl.appendChild(highlightKeyword(captionRaw, KEYWORD));
+        } else {
+          capEl.classList.add("is-empty");
+          capEl.textContent = "Aucune description.";
+        }
+        bioBox.appendChild(capEl);
+
+        if (tags.length) {
+          const tagsRow = document.createElement("div");
+          tagsRow.className = "arch-hashtags";
+          tags.forEach((h) => {
+            const pill = document.createElement("span");
+            pill.className = "arch-hashtag";
+            pill.textContent = `#${h}`;
+            tagsRow.appendChild(pill);
+          });
+          bioBox.appendChild(tagsRow);
+        }
+
+        body.appendChild(bioBox);
+
         const txLabel = document.createElement("p");
         txLabel.className = "arch-transcript-label";
         txLabel.textContent = "Paroles / texte";
